@@ -18,3 +18,10 @@ ios/Pods/
 .DS_Store
 Thumbs.db
 .env
+# Firebase files
+.firebase/
+firebug.log*
+
+# Environment variables (عشان هنحط فيها الـ Firebase API Keys)
+.env
+.env.local
