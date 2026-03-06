@@ -14,7 +14,7 @@ import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "./firebase"; // مسار الفايربيز الصح بتاعك بنقطة واحدة اهو
 import { useRouter } from 'expo-router'; // ضفنا الروتر هنا
 
-const teamLogo = require('../../assets/images/yallaclass_logo.jpg');
+const teamLogo = require('../assets/images/yallaclass_logo.jpg');
 
 // شيلنا الـ navigation من الأقواس خالص
 export default function ForgetPassword() {

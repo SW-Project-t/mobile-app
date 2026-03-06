@@ -8,22 +8,25 @@ import {
   Image, 
   StyleSheet, 
   Alert,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import axios from 'axios';
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "./firebase";
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from "./firebase";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const teamLogo = require('../../assets/images/yallaclass_logo.jpg');
+const teamLogo = require('../assets/images/yallaclass_logo.jpg');
 
 export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
@@ -34,26 +37,58 @@ export default function Login() {
       Alert.alert("تنبيه", "Please enter both email and password");
       return;
     }
+    
+    setIsLoading(true);
+
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await userCredential.user.getIdToken();
-  
+      const user = userCredential.user;
+      const idToken = await user.getIdToken();
+      
       const apiUrl = Platform.OS === 'web' 
         ? 'http://localhost:3001/verify-login' 
         : 'http://192.168.1.103:3001/verify-login';
 
-      const response = await axios.post(apiUrl, {
-        idToken: idToken 
-      });
-      if (response.data.success) {
-        Alert.alert("نجاح", "Login Successful! Welcome " + response.data.profile.fullName);
-        const tokenToSave = response.data.token ? response.data.token : idToken;
-        await AsyncStorage.setItem('token', tokenToSave);
-       }
-      } catch (error) {
-        console.error("Full Error Details:", error);
-        const errorMessage = error.response?.data?.message || error.message;
-        Alert.alert("فشل الدخول", errorMessage);
+      let tokenToSave = idToken;
+      
+      try {
+        const response = await axios.post(apiUrl, { idToken: idToken });
+        if (response.data.success && response.data.token) {
+          tokenToSave = response.data.token;
+        }
+      } catch (backendError) {
+        console.log("Backend verification skipped or failed, proceeding with Firebase logic.");
+      }
+      
+      await AsyncStorage.setItem('token', tokenToSave);
+      const userDocRef = doc(db, "users", user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      setIsLoading(false);
+
+      if (userDocSnap.exists()) {
+        const userData = userDocSnap.data();
+        const userRole = userData.role?.toLowerCase() || ''; 
+        if (userRole === 'student') {
+          router.replace('/StudentDashboard');
+        } 
+        else if (userRole === 'instructor' || userRole === 'professor') {
+          router.replace('/ProfessorDashboard');
+        } 
+        else if (userRole === 'admin') {
+          router.replace('/AdminDashboard');
+        } 
+        else {
+          Alert.alert("خطأ", "Role not recognized: " + userRole);
+        }
+      } else {
+        Alert.alert("خطأ", "User data not found in database!");
+      }
+
+    } catch (error) {
+      setIsLoading(false);
+      console.error("Login Error: ", error);
+      Alert.alert("فشل الدخول", "Invalid email or password");
     }
   };
 
@@ -64,7 +99,6 @@ export default function Login() {
       start={{ x: 0, y: 0 }}
       end={{ x: 0, y: 1 }}
     >
-
       <View style={styles.container2}>
         <View style={styles.header_brand}>
           <Image source={teamLogo} style={styles.brand_logo} />
@@ -114,9 +148,15 @@ export default function Login() {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
-            <TouchableOpacity style={styles.login_button_content} onPress={handleSignIn}>
-                <Text style={styles.login_button_text}>Sign in</Text>
-                <Feather name="arrow-right" size={20} color="white" />
+            <TouchableOpacity style={styles.login_button_content} onPress={handleSignIn} disabled={isLoading}>
+                {isLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <Text style={styles.login_button_text}>Sign in</Text>
+                    <Feather name="arrow-right" size={20} color="white" />
+                  </>
+                )}
             </TouchableOpacity>
           </LinearGradient>
         </View>
@@ -131,15 +171,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-  },
-  page_logo: {
-    position: 'absolute',
-    top: 60,
-    left: 20,
-    width: 60,
-    height: 75,
-    borderRadius: 10,
-    resizeMode: 'contain',
   },
   container2: {
     width: '100%',
