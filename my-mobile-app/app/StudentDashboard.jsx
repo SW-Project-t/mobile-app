@@ -8,8 +8,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { auth, db } from './firebase'; 
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const STORAGE_KEYS = {
@@ -37,11 +38,24 @@ const defaultData = {
         { week: "W4", rate: 89 }, { week: "W5", rate: 93 }
     ]
 };
+const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
+    const R = 6371e3; 
+    const p1 = lat1 * Math.PI/180;
+    const p2 = lat2 * Math.PI/180;
+    const deltaP = (lat2-lat1) * Math.PI/180;
+    const deltaLon = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(deltaP/2) * Math.sin(deltaP/2) +
+              Math.cos(p1) * Math.cos(p2) *
+              Math.sin(deltaLon/2) * Math.sin(deltaLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; 
+};
 
 export default function StudentDashboard() {
     const router = useRouter();
 
     const [isLoading, setIsLoading] = useState(true);
+    const [isCheckingIn, setIsCheckingIn] = useState(false);
     const [appState, setAppState] = useState(defaultData);
     const [studentData, setStudentData] = useState({ 
         name: "Loading...", 
@@ -57,6 +71,7 @@ export default function StudentDashboard() {
     const [modal, setModal] = useState({ show: false, type: null });
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
     const [courseForm, setCourseForm] = useState({ id: '', name: '', instructor: '', schedule: '', room: '', students: '' });
+
     useEffect(() => {
         const loadSavedData = async () => {
             try {
@@ -86,6 +101,7 @@ export default function StudentDashboard() {
         };
         loadSavedData();
     }, []);
+
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
@@ -115,6 +131,7 @@ export default function StudentDashboard() {
         });
         return () => unsubscribe();
     }, [router]);
+
     useEffect(() => {
         if (!isLoading) {
             AsyncStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify(appState.courses));
@@ -123,6 +140,7 @@ export default function StudentDashboard() {
             AsyncStorage.setItem(STORAGE_KEYS.TREND, JSON.stringify(appState.trend));
         }
     }, [appState, isLoading]);
+
     useEffect(() => {
         const timer = setInterval(() => {
             setAppState(prev => {
@@ -135,6 +153,7 @@ export default function StudentDashboard() {
         }, 60000);
         return () => clearInterval(timer);
     }, []);
+
     const handleImageUpload = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (permissionResult.granted === false) {
@@ -181,19 +200,81 @@ export default function StudentDashboard() {
         setToast({ show: true, message, type });
         setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
     };
+    const handleCheckIn = async (courseId, courseName) => {
+        if (!studentData.gpsActive) {
+            Alert.alert("تنبيه", "يرجى تفعيل الـ GPS من التطبيق أولاً!");
+            return;
+        }
 
-    const handleCheckIn = (courseId) => {
-        setAppState(prev => {
-            const newCourses = prev.courses.map(c => {
-                if (c.id === courseId && !c.checkedIn) {
-                    return { ...c, checkedIn: true, attendanceRate: Math.min(100, c.attendanceRate + 1) };
+        const activeCheckedInCourse = appState.courses.find(
+            c => c.checkedIn && c.timeRemaining > 0 && c.id !== courseId
+        );
+
+        if (activeCheckedInCourse) {
+            Alert.alert(
+                "تداخل محاضرات", 
+                `لا يمكنك التسجيل. أنت مسجل حالياً في محاضرة (${activeCheckedInCourse.name}) ولم ينتهِ وقتها بعد.`
+            );
+            return;
+        }
+
+        if (!studentData.gpsActive) {
+            Alert.alert("تنبيه", "يرجى تفعيل الـ GPS من التطبيق أولاً!");
+            return;
+        }
+
+        try {
+            setIsCheckingIn(true);
+            let { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert("مرفوض", "نحتاج صلاحية الوصول للموقع لتسجيل حضورك.");
+                setIsCheckingIn(false);
+                return;
+            }
+            let location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+            const studentLat = location.coords.latitude;
+            const studentLon = location.coords.longitude;
+            const CLASSROOM_LAT =  29.835141; 
+            const CLASSROOM_LON = 31.360812; 
+            const ALLOWED_RADIUS = 50; 
+            const distance = getDistanceFromLatLonInMeters(studentLat, studentLon, CLASSROOM_LAT, CLASSROOM_LON);
+
+            if (distance <= ALLOWED_RADIUS) {
+                const user = auth.currentUser;
+                if (user) {
+                    await addDoc(collection(db, "attendance"), {
+                        studentId: user.uid,
+                        studentName: studentData.name,
+                        courseId: courseId,
+                        courseName: courseName,
+                        status: "Present",
+                        distanceFromClass: Math.round(distance),
+                        timestamp: serverTimestamp()
+                    });
                 }
-                return c;
-            });
-            return { ...prev, courses: newCourses };
-        });
-        setStudentData(prev => ({ ...prev, overallAttendance: Math.min(100, prev.overallAttendance + 0.5) }));
-        showNotification('Checked in successfully!');
+                setAppState(prev => {
+                    const newCourses = prev.courses.map(c => {
+                        if (c.id === courseId && !c.checkedIn) {
+                            return { ...c, checkedIn: true, attendanceRate: Math.min(100, c.attendanceRate + 1) };
+                        }
+                        return c;
+                    });
+                    return { ...prev, courses: newCourses };
+                });
+                setStudentData(prev => ({ ...prev, overallAttendance: Math.min(100, prev.overallAttendance + 0.5) }));
+                showNotification('Checked in successfully!');
+                Alert.alert("نجاح", "تم تسجيل حضورك بنجاح في قاعدة البيانات!");
+
+            } else {
+                Alert.alert("فشل التسجيل", `أنت تبعد ${Math.round(distance)} متر عن المدرج. يجب أن تكون داخل القاعة.`);
+            }
+
+        } catch (error) {
+            console.error("Geo-Attendance Error:", error);
+            Alert.alert("خطأ", "حدثت مشكلة أثناء تحديد الموقع الجغرافي.");
+        } finally {
+            setIsCheckingIn(false);
+        }
     };
 
     const toggleGPS = () => {
@@ -359,28 +440,35 @@ export default function StudentDashboard() {
                         <Text style={styles.courseInstructor}>{course.instructor}</Text>
                         
                         {selectedCourse === course.id ? (
-                            <View style={styles.courseDetails}>
-                                <View style={styles.detailRow}>
-                                    <Feather name="clock" size={14} color="#64748b" />
-                                    <Text style={styles.detailText}>{course.schedule}</Text>
-                                </View>
-                                <View style={styles.detailRow}>
-                                    <Feather name="map-pin" size={14} color="#64748b" />
-                                    <Text style={styles.detailText}>Room {course.room}</Text>
-                                </View>
-                                <View style={styles.checkInArea}>
+                            <View style={styles.checkInArea}>
                                     <View style={styles.rateCircle}>
                                         <Text style={styles.rateText}>{course.attendanceRate}%</Text>
                                     </View>
-                                    <TouchableOpacity 
-                                        style={[styles.checkInBtn, course.checkedIn ? styles.checkInBtnDisabled : null]}
-                                        onPress={() => handleCheckIn(course.id)}
-                                        disabled={course.checkedIn}
-                                    >
-                                        <Text style={styles.checkInText}>{course.checkedIn ? 'Checked In' : 'Check In'}</Text>
-                                    </TouchableOpacity>
+                                    {(() => {
+                                        const isBusyInAnotherCourse = appState.courses.some(
+                                            c => c.checkedIn && c.timeRemaining > 0 && c.id !== course.id
+                                        );
+
+                                        return (
+                                            <TouchableOpacity 
+                                                style={[
+                                                    styles.checkInBtn, 
+                                                    (course.checkedIn || isBusyInAnotherCourse) ? styles.checkInBtnDisabled : null
+                                                ]}
+                                                onPress={() => handleCheckIn(course.id, course.name)}
+                                                disabled={course.checkedIn || isCheckingIn || isBusyInAnotherCourse}
+                                            >
+                                                {isCheckingIn && selectedCourse === course.id ? (
+                                                    <ActivityIndicator color="#fff" size="small" />
+                                                ) : (
+                                                    <Text style={styles.checkInText}>
+                                                        {course.checkedIn ? 'Checked In' : isBusyInAnotherCourse ? 'Busy' : 'Check In'}
+                                                    </Text>
+                                                )}
+                                            </TouchableOpacity>
+                                        );
+                                    })()}
                                 </View>
-                            </View>
                         ) : null}
                     </TouchableOpacity>
                 ))}
