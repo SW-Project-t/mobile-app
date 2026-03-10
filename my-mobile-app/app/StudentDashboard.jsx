@@ -145,7 +145,12 @@ export default function StudentDashboard() {
         const timer = setInterval(() => {
             setAppState(prev => {
                 const newCourses = prev.courses.map(c => {
-                    if (c.timeRemaining > 0) return { ...c, timeRemaining: c.timeRemaining - 1 };
+                    if (c.timeRemaining > 0) {
+                        return { ...c, timeRemaining: c.timeRemaining - 1 };
+                    } 
+                    else if (c.timeRemaining === 0 && c.checkedIn) {
+                        return { ...c, checkedIn: false };
+                    }
                     return c;
                 });
                 return { ...prev, courses: newCourses };
