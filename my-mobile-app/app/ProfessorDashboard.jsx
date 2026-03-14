@@ -11,6 +11,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { auth, db } from './firebase'; 
 import { doc, getDoc, updateDoc, getDocs, collection, setDoc, addDoc, where, query, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+import QRCode from 'react-native-qrcode-svg';
 
 const STORAGE_KEYS = {
     PROF_IMAGE: 'yallaclass_prof_image'
@@ -23,12 +24,10 @@ export default function ProfessorDashboard() {
     const [profileImage, setProfileImage] = useState(null);
     const [profData, setProfData] = useState({ name: 'Loading...', code: '...' });
 
-    // Courses state
     const [courses, setCourses] = useState([]);
     const [adminCourses, setAdminCourses] = useState([]);
     const [activeTab, setActiveTab] = useState('Dashboard');
 
-    // Modal states
     const [showModal, setShowModal] = useState(false);
     const [modalType, setModalType] = useState('');
     const [selectedCourse, setSelectedCourse] = useState(null);
@@ -38,7 +37,6 @@ export default function ProfessorDashboard() {
         id: '', name: '', schedule: '', room: '', students: '', capacity: '' 
     });
 
-    // Password modal state
     const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
     const [passwordFields, setPasswordFields] = useState({
         currentPassword: '',
@@ -46,10 +44,9 @@ export default function ProfessorDashboard() {
         confirmPassword: ''
     });
 
-    // Digital ID modal state - NEW
     const [isDigitalIdModalOpen, setIsDigitalIdModalOpen] = useState(false);
+    const [showCoursePicker, setShowCoursePicker] = useState(false);
 
-    // Fetch admin courses
     useEffect(() => {
         const fetchAdminCourses = async () => {
             try {
@@ -66,7 +63,6 @@ export default function ProfessorDashboard() {
         fetchAdminCourses();
     }, []);
 
-    // Fetch professor's assigned courses
     useEffect(() => {
         const fetchProfessorCourses = async () => {
             const user = auth.currentUser;
@@ -170,7 +166,6 @@ export default function ProfessorDashboard() {
         ]);
     };
 
-    // Password functions
     const handlePasswordInputChange = (name, value) => {
         setPasswordFields(prev => ({ ...prev, [name]: value }));
     };
@@ -233,7 +228,6 @@ export default function ProfessorDashboard() {
         showNotification('Profile image removed');
     };
 
-    // Digital ID functions - NEW
     const openDigitalID = () => {
         setIsDigitalIdModalOpen(true);
     };
@@ -319,18 +313,18 @@ export default function ProfessorDashboard() {
         ]);
     };
 
-    const handleSelectCourseFromAdmin = (courseId) => {
-        const selected = adminCourses.find(c => c.courseId === courseId);
-        if (selected) {
+    const handleSelectCourseFromAdmin = (course) => {
+        if (course) {
             setNewCourse({
-                id: selected.courseId,
-                name: selected.courseName,
-                schedule: `${selected.SelectDays || ''} | ${selected.Time || ''}`,
-                room: selected.RoomNumber || '',
-                students: selected.totalStudents || 0,
-                capacity: selected.capacity || 0
+                id: course.courseId || '',
+                name: course.courseName || '',
+                schedule: course.schedule || `${course.SelectDays || ''} | ${course.Time || ''}`,
+                room: course.RoomNumber || '',
+                students: course.totalStudents?.toString() || '0',
+                capacity: course.capacity?.toString() || '0'
             });
-            showNotification(`Course ${selected.courseName} selected`, 'success');
+            setShowCoursePicker(false);
+            showNotification(`Course ${course.courseName} selected`, 'success');
         }
     };
 
@@ -409,8 +403,6 @@ export default function ProfessorDashboard() {
         Alert.alert('Export Data', 'Data copied to clipboard. You can paste it anywhere.', [
             { text: 'OK' }
         ]);
-        // In React Native, we can't directly download files like web
-        // You might want to implement sharing functionality here
         showNotification('Data exported to console');
         console.log('Exported Courses:', courses);
     };
@@ -429,7 +421,6 @@ export default function ProfessorDashboard() {
 
     const renderDashboard = () => (
         <View>
-            {/* Stats Cards */}
             <View style={styles.statsGrid}>
                 <View style={styles.statCard}>
                     <Text style={styles.statLabel}>Total Courses</Text>
@@ -449,7 +440,6 @@ export default function ProfessorDashboard() {
                 </View>
             </View>
 
-            {/* Quick Actions */}
             <View style={styles.quickActionsGrid}>
                 <TouchableOpacity style={[styles.actionCard, styles.cardBlue]} onPress={openAddModal}>
                     <Feather name="book-open" size={28} color="#fff" />
@@ -459,17 +449,12 @@ export default function ProfessorDashboard() {
                     <Feather name="download" size={28} color="#fff" />
                     <Text style={styles.actionText}>Export Data</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionCard, styles.cardYellow]} onPress={() => setIsPasswordModalOpen(true)}>
-                    <Feather name="key" size={28} color="#fff" />
-                    <Text style={styles.actionText}>Change Password</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionCard, styles.cardRed]} onPress={resetAllAttendance}>
+                <TouchableOpacity style={[styles.actionCard, styles.cardYellow]} onPress={resetAllAttendance}>
                     <Feather name="clock" size={28} color="#fff" />
                     <Text style={styles.actionText}>Reset Today</Text>
                 </TouchableOpacity>
             </View>
 
-            {/* Courses Section */}
             <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>My Courses</Text>
                 <TouchableOpacity onPress={() => setActiveTab('My Courses')}>
@@ -518,7 +503,6 @@ export default function ProfessorDashboard() {
                 </View>
             ))}
 
-            {/* Chart Card */}
             <View style={styles.chartCard}>
                 <View style={styles.chartHeader}>
                     <Text style={styles.chartTitle}>Weekly Attendance Overview</Text>
@@ -629,7 +613,6 @@ export default function ProfessorDashboard() {
                     <Text style={styles.userName}>{profData.name}</Text>
                     <Text style={styles.userIdText}>ID: {profData.code}</Text>
                     
-                    {/* Digital ID Button - NEW */}
                     <TouchableOpacity style={styles.digitalIdButton} onPress={openDigitalID}>
                         <Feather name="shield" size={14} color="#fff" />
                         <Text style={styles.digitalIdButtonText}>Digital ID</Text>
@@ -688,7 +671,14 @@ export default function ProfessorDashboard() {
                 >
                     <Text style={[styles.navText, activeTab === 'Settings' && styles.navTextActive]}>Settings</Text>
                 </TouchableOpacity>
+                
+                <TouchableOpacity style={styles.navItemPassword} onPress={() => setIsPasswordModalOpen(true)}>
+                    <Feather name="key" size={14} color="#4361ee" />
+                    <Text style={styles.navTextPassword}>Change Password</Text>
+                </TouchableOpacity>
+                
                 <TouchableOpacity style={styles.navItemLogout} onPress={handleLogout}>
+                    <Feather name="log-out" size={14} color="#ef4444" />
                     <Text style={styles.navTextLogout}>Logout</Text>
                 </TouchableOpacity>
             </ScrollView>
@@ -708,7 +698,6 @@ export default function ProfessorDashboard() {
                 <View style={{ height: 50 }} />
             </ScrollView>
 
-            {/* Password Modal */}
             <Modal visible={isPasswordModalOpen} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
@@ -752,7 +741,6 @@ export default function ProfessorDashboard() {
                 </View>
             </Modal>
 
-            {/* Digital ID Modal - NEW */}
             <Modal visible={isDigitalIdModalOpen} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={[styles.modalContent, styles.digitalIdModal]}>
@@ -763,7 +751,6 @@ export default function ProfessorDashboard() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* Card Header */}
                         <View style={styles.idCardHeader}>
                             <View style={styles.idSchool}>
                                 <Feather name="home" size={24} color="#4361ee" />
@@ -775,7 +762,6 @@ export default function ProfessorDashboard() {
                             <Feather name="shield" size={32} color="#4361ee" />
                         </View>
 
-                        {/* Card Body */}
                         <View style={styles.idCardBody}>
                             <View style={styles.idPhotoSection}>
                                 {profileImage ? (
@@ -813,13 +799,20 @@ export default function ProfessorDashboard() {
                             </View>
                         </View>
 
-                        {/* Card Footer with QR */}
                         <View style={styles.idCardFooter}>
                             <View style={styles.idQRLarge}>
-                                <View style={styles.qrPlaceholder}>
-                                    <Text style={styles.qrText}>QR</Text>
-                                    <Text style={styles.qrSubtext}>Scan to verify</Text>
-                                </View>
+                                <QRCode
+                                    value={JSON.stringify({
+                                        name: profData.name,
+                                        id: profData.code,
+                                        email: auth.currentUser?.email,
+                                        department: 'Computer Science',
+                                        university: 'Cairo University'
+                                    })}
+                                    size={70}
+                                    color="#4361ee"
+                                    backgroundColor="white"
+                                />
                             </View>
                             <View style={styles.idValidity}>
                                 <View style={styles.idValidityBadge}>
@@ -838,7 +831,6 @@ export default function ProfessorDashboard() {
                 </View>
             </Modal>
 
-            {/* Course Modal */}
             <Modal visible={showModal} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={[styles.modalContent, modalType === 'attendance' && styles.modalContentCentered]}>
@@ -870,26 +862,16 @@ export default function ProfessorDashboard() {
                                 {modalType === 'add' && (
                                     <View style={styles.selectCourseContainer}>
                                         <Text style={styles.selectCourseLabel}>Select Course You Want To Teach</Text>
-                                        <View style={styles.pickerWrapper}>
-                                            <TouchableOpacity 
-                                                style={styles.pickerButton}
-                                                onPress={() => {
-                                                    // Simple picker - you might want to use a proper picker modal
-                                                    const coursesList = adminCourses.map(c => `${c.courseId} - ${c.courseName}`).join('\n');
-                                                    Alert.alert('Available Courses', coursesList, [
-                                                        ...adminCourses.map(course => ({
-                                                            text: `${course.courseId} - ${course.courseName}`,
-                                                            onPress: () => handleSelectCourseFromAdmin(course.courseId)
-                                                        })),
-                                                        { text: 'Cancel', style: 'cancel' }
-                                                    ]);
-                                                }}
-                                            >
-                                                <Text style={newCourse.id ? styles.pickerTextSelected : styles.pickerTextPlaceholder}>
-                                                    {newCourse.id ? `${newCourse.id} - ${newCourse.name}` : '-- Choose a Course --'}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        </View>
+                                        
+                                        <TouchableOpacity 
+                                            style={styles.pickerButton}
+                                            onPress={() => setShowCoursePicker(true)}
+                                        >
+                                            <Text style={newCourse.id ? styles.pickerTextSelected : styles.pickerTextPlaceholder}>
+                                                {newCourse.id ? `${newCourse.id} - ${newCourse.name}` : '-- Choose a Course --'}
+                                            </Text>
+                                            <Feather name="chevron-down" size={20} color="#64748b" />
+                                        </TouchableOpacity>
                                     </View>
                                 )}
 
@@ -940,6 +922,40 @@ export default function ProfessorDashboard() {
                                 </View>
                             </ScrollView>
                         )}
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal visible={showCoursePicker} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select a Course</Text>
+                            <TouchableOpacity onPress={() => setShowCoursePicker(false)} style={styles.closeButton}>
+                                <Feather name="x" size={20} color="#64748b" />
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <ScrollView>
+                            {adminCourses.map((course) => (
+                                <TouchableOpacity
+                                    key={course.id}
+                                    style={styles.coursePickerItem}
+                                    onPress={() => handleSelectCourseFromAdmin(course)}
+                                >
+                                    <View>
+                                        <Text style={styles.coursePickerCode}>{course.courseId}</Text>
+                                        <Text style={styles.coursePickerName}>{course.courseName}</Text>
+                                        {course.schedule && (
+                                            <Text style={styles.coursePickerDetails}>
+                                                {course.schedule} | {course.RoomNumber || 'No Room'}
+                                            </Text>
+                                        )}
+                                    </View>
+                                    <Feather name="check" size={20} color="#4361ee" />
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
                     </View>
                 </View>
             </Modal>
@@ -1051,7 +1067,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold' 
     },
 
-    // Digital ID Button Styles - NEW
     digitalIdButton: {
         backgroundColor: '#4a90e2',
         flexDirection: 'row',
@@ -1093,12 +1108,30 @@ const styles = StyleSheet.create({
     navItemActive: { 
         backgroundColor: '#4361ee' 
     },
-    navItemLogout: { 
-        paddingHorizontal: 18, 
-        paddingVertical: 8, 
-        borderRadius: 20, 
-        backgroundColor: '#fee2e2', 
-        marginRight: 10 
+    navItemPassword: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 18,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: '#e8f0fe',
+        marginRight: 10
+    },
+    navTextPassword: {
+        color: '#4361ee',
+        fontWeight: '600',
+        fontSize: 13
+    },
+    navItemLogout: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 18,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: '#fee2e2',
+        marginRight: 10
     },
     navText: { 
         color: '#64748b', 
@@ -1126,7 +1159,6 @@ const styles = StyleSheet.create({
         marginBottom: 15 
     },
 
-    // Dashboard styles
     quickActionsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1327,7 +1359,6 @@ const styles = StyleSheet.create({
         fontSize: 12 
     },
 
-    // New attendance summary styles
     attendanceSummary: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1423,7 +1454,6 @@ const styles = StyleSheet.create({
         fontSize: 12 
     },
 
-    // Chart styles
     chartCard: {
         backgroundColor: '#fff',
         padding: 15,
@@ -1579,7 +1609,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold' 
     },
 
-    // Password modal specific styles
     passwordRequirement: {
         color: '#64748b',
         fontSize: 12,
@@ -1587,7 +1616,6 @@ const styles = StyleSheet.create({
         fontStyle: 'italic'
     },
 
-    // Select course styles
     selectCourseContainer: {
         marginBottom: 15,
         borderWidth: 2,
@@ -1600,25 +1628,50 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginBottom: 8
     },
-    pickerWrapper: {
+    pickerButton: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 12,
+        backgroundColor: '#f8fafc',
         borderWidth: 1,
         borderColor: '#4a90e2',
-        borderRadius: 8,
-        overflow: 'hidden'
-    },
-    pickerButton: {
-        padding: 12,
-        backgroundColor: '#f8fafc'
+        borderRadius: 8
     },
     pickerTextPlaceholder: {
-        color: '#94a3b8'
+        color: '#94a3b8',
+        flex: 1
     },
     pickerTextSelected: {
         color: '#1e293b',
-        fontWeight: '500'
+        fontWeight: '500',
+        flex: 1
     },
 
-    // Under development styles
+    coursePickerItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e2e8f0'
+    },
+    coursePickerCode: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#4361ee'
+    },
+    coursePickerName: {
+        fontSize: 16,
+        color: '#1e293b',
+        marginTop: 2
+    },
+    coursePickerDetails: {
+        fontSize: 12,
+        color: '#64748b',
+        marginTop: 2
+    },
+
     underDevelopment: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -1642,7 +1695,6 @@ const styles = StyleSheet.create({
         textAlign: 'center'
     },
 
-    // Digital ID Modal Styles - NEW
     digitalIdModal: {
         maxHeight: '90%',
         padding: 15
@@ -1745,19 +1797,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 1,
         borderColor: '#e2e8f0'
-    },
-    qrPlaceholder: {
-        alignItems: 'center'
-    },
-    qrText: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#4361ee'
-    },
-    qrSubtext: {
-        fontSize: 8,
-        color: '#64748b',
-        marginTop: 2
     },
     idValidity: {
         flex: 1,
