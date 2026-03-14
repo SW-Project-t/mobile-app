@@ -9,8 +9,8 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { auth, db } from './firebase'; 
-import { doc, getDoc } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, updateDoc, getDocs, collection, setDoc, addDoc, where, query, deleteDoc } from 'firebase/firestore';
+import { onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 
 const STORAGE_KEYS = {
     PROF_IMAGE: 'yallaclass_prof_image'
@@ -23,18 +23,90 @@ export default function ProfessorDashboard() {
     const [profileImage, setProfileImage] = useState(null);
     const [profData, setProfData] = useState({ name: 'Loading...', code: '...' });
 
-    const [courses, setCourses] = useState([
-        { id: 'CS401', name: 'Data Structures', schedule: 'Mon, Wed 10:00 AM', room: 'Room 201', students: 45, avgAttendance: 95, todayPresent: 40, todayLate: 3, todayAbsent: 2 },
-        { id: 'CS301', name: 'Operating Systems', schedule: 'Tue, Thu 2:00 PM', room: 'Room 305', students: 38, avgAttendance: 88, todayPresent: 32, todayLate: 4, todayAbsent: 2 },
-        { id: 'CS501', name: 'Machine Learning', schedule: 'Wed, Fri 11:00 AM', room: 'Room 102', students: 32, avgAttendance: 92, todayPresent: 28, todayLate: 2, todayAbsent: 2 }
-    ]);
+    // Courses state
+    const [courses, setCourses] = useState([]);
+    const [adminCourses, setAdminCourses] = useState([]);
+    const [activeTab, setActiveTab] = useState('Dashboard');
 
+    // Modal states
     const [showModal, setShowModal] = useState(false);
     const [modalType, setModalType] = useState('');
     const [selectedCourse, setSelectedCourse] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-    const [newCourse, setNewCourse] = useState({ id: '', name: '', schedule: '', room: '', students: '' });
+    const [newCourse, setNewCourse] = useState({ 
+        id: '', name: '', schedule: '', room: '', students: '', capacity: '' 
+    });
+
+    // Password modal state
+    const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+    const [passwordFields, setPasswordFields] = useState({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+    });
+
+    // Digital ID modal state - NEW
+    const [isDigitalIdModalOpen, setIsDigitalIdModalOpen] = useState(false);
+
+    // Fetch admin courses
+    useEffect(() => {
+        const fetchAdminCourses = async () => {
+            try {
+                const querySnapshot = await getDocs(collection(db, "courses"));
+                const coursesList = querySnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                setAdminCourses(coursesList);
+            } catch (error) {
+                console.error("Error fetching admin courses:", error);
+            }
+        };
+        fetchAdminCourses();
+    }, []);
+
+    // Fetch professor's assigned courses
+    useEffect(() => {
+        const fetchProfessorCourses = async () => {
+            const user = auth.currentUser;
+            if (!user) return;
+
+            try {
+                const q = query(collection(db, "professorCourses"), where("professorId", "==", user.uid));
+                const querySnapshot = await getDocs(q);
+                
+                if (!querySnapshot.empty) {
+                    const professorCoursesList = querySnapshot.docs.map(doc => {
+                        const data = doc.data();
+                        return {
+                            id: data.courseId,
+                            name: data.courseName,
+                            schedule: data.schedule,
+                            room: data.room,
+                            capacity: data.capacity || 0,
+                            students: data.students || 0,
+                            avgAttendance: data.avgAttendance || 0,
+                            todayPresent: data.todayPresent || 0,
+                            todayLate: data.todayLate || 0,
+                            todayAbsent: data.todayAbsent || 0,
+                            firestoreId: doc.id
+                        };
+                    });
+                    
+                    setCourses(prev => {
+                        const existingIds = new Set(prev.map(c => c.id));
+                        const newCourses = professorCoursesList.filter(c => !existingIds.has(c.id));
+                        return [...prev, ...newCourses];
+                    });
+                }
+            } catch (error) {
+                console.error("Error fetching professor courses:", error);
+            }
+        };
+
+        fetchProfessorCourses();
+    }, []);
 
     useEffect(() => {
         const loadInitialData = async () => {
@@ -85,7 +157,7 @@ export default function ProfessorDashboard() {
     };
 
     const handleLogout = () => {
-        Alert.alert("تسجيل الخروج", "Are you sure you want to logout?", [
+        Alert.alert("Logout", "Are you sure you want to logout?", [
             { text: "Cancel", style: "cancel" },
             { 
                 text: "Logout", 
@@ -98,10 +170,45 @@ export default function ProfessorDashboard() {
         ]);
     };
 
+    // Password functions
+    const handlePasswordInputChange = (name, value) => {
+        setPasswordFields(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handlePasswordUpdate = async () => {
+        const user = auth.currentUser;
+        
+        if (passwordFields.newPassword !== passwordFields.confirmPassword) {
+            showNotification("New passwords do not match!", 'error');
+            return;
+        }
+
+        if (passwordFields.newPassword.length < 6) {
+            showNotification("Password must be at least 6 characters!", 'error');
+            return;
+        }
+
+        try {
+            const credential = EmailAuthProvider.credential(user.email, passwordFields.currentPassword);
+            await reauthenticateWithCredential(user, credential);
+            await updatePassword(user, passwordFields.newPassword);
+            
+            showNotification("Password updated successfully!", 'success');
+            setIsPasswordModalOpen(false);
+            setPasswordFields({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        } catch (error) {
+            if (error.code === 'auth/wrong-password') {
+                showNotification("Current password is incorrect!", 'error');
+            } else {
+                showNotification("Error updating password. Please try again.", 'error');
+            }
+        }
+    };
+
     const handleImageUpload = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (permissionResult.granted === false) {
-            Alert.alert("تنبيه", "يجب إعطاء صلاحية الوصول للصور");
+            Alert.alert("Permission Required", "Please allow access to photos");
             return;
         }
 
@@ -116,31 +223,54 @@ export default function ProfessorDashboard() {
             const uri = result.assets[0].uri;
             setProfileImage(uri);
             await AsyncStorage.setItem(STORAGE_KEYS.PROF_IMAGE, uri);
-            showNotification('Profile photo updated!');
+            showNotification('Profile image updated successfully!');
         }
     };
 
     const removeProfileImage = async () => {
         setProfileImage(null);
         await AsyncStorage.removeItem(STORAGE_KEYS.PROF_IMAGE);
-        showNotification('Photo removed');
+        showNotification('Profile image removed');
+    };
+
+    // Digital ID functions - NEW
+    const openDigitalID = () => {
+        setIsDigitalIdModalOpen(true);
+    };
+
+    const closeDigitalID = () => {
+        setIsDigitalIdModalOpen(false);
+    };
+
+    const resetDailyAttendance = (courseId) => {
+        setCourses(courses.map(c => 
+            c.id === courseId ? { ...c, todayPresent: 0, todayLate: 0, todayAbsent: 0 } : c
+        ));
+        showNotification(`Attendance reset for ${courseId}`);
+    };
+
+    const resetAllAttendance = () => {
+        Alert.alert('Reset Attendance', 'Reset today\'s attendance for ALL courses?', [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+                text: 'Reset', 
+                style: 'destructive', 
+                onPress: () => {
+                    setCourses(courses.map(c => ({ ...c, todayPresent: 0, todayLate: 0, todayAbsent: 0 })));
+                    showNotification('All courses reset for the day');
+                } 
+            }
+        ]);
     };
 
     const filteredCourses = courses.filter(course =>
-        course.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        course.id.toLowerCase().includes(searchTerm.toLowerCase())
+        course.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        course.id?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const openAddModal = () => {
         setModalType('add');
-        setNewCourse({ id: '', name: '', schedule: '', room: '', students: '' });
-        setShowModal(true);
-    };
-
-    const openEditModal = (course) => {
-        setModalType('edit');
-        setSelectedCourse(course);
-        setNewCourse(course);
+        setNewCourse({ id: '', name: '', schedule: '', room: '', students: '', capacity: '' });
         setShowModal(true);
     };
 
@@ -150,33 +280,116 @@ export default function ProfessorDashboard() {
         setShowModal(true);
     };
 
-    const deleteCourse = (id) => {
+    const deleteCourse = async (id) => {
         Alert.alert('Delete Course', 'Are you sure you want to delete this course?', [
             { text: 'Cancel', style: 'cancel' },
             { 
                 text: 'Delete', 
                 style: 'destructive', 
-                onPress: () => {
-                    setCourses(courses.filter(c => c.id !== id));
-                    showNotification(`Course ${id} deleted`);
+                onPress: async () => {
+                    try {
+                        const user = auth.currentUser;
+                        if (!user) return;
+                        
+                        setCourses(courses.filter(c => c.id !== id));
+                        
+                        try {
+                            const q = query(
+                                collection(db, "professorCourses"), 
+                                where("professorId", "==", user.uid),
+                                where("courseId", "==", id)
+                            );
+                            const querySnapshot = await getDocs(q);
+                            
+                            querySnapshot.forEach(async (document) => {
+                                await deleteDoc(doc(db, "professorCourses", document.id));
+                            });
+                            
+                            showNotification(`Course ${id} deleted successfully`);
+                        } catch (firestoreError) {
+                            console.error("Firestore delete error:", firestoreError);
+                            showNotification('Course deleted locally but failed to delete from database', 'warning');
+                        }
+                    } catch (error) {
+                        console.error("Error deleting course:", error);
+                        showNotification('Error deleting course', 'error');
+                    }
                 } 
             }
         ]);
     };
 
-    const saveCourse = () => {
+    const handleSelectCourseFromAdmin = (courseId) => {
+        const selected = adminCourses.find(c => c.courseId === courseId);
+        if (selected) {
+            setNewCourse({
+                id: selected.courseId,
+                name: selected.courseName,
+                schedule: `${selected.SelectDays || ''} | ${selected.Time || ''}`,
+                room: selected.RoomNumber || '',
+                students: selected.totalStudents || 0,
+                capacity: selected.capacity || 0
+            });
+            showNotification(`Course ${selected.courseName} selected`, 'success');
+        }
+    };
+
+    const saveCourse = async () => {
         if (!newCourse.id || !newCourse.name) {
-            showNotification('Please fill all required fields', 'error');
+            showNotification('Please select a valid course', 'error');
             return;
         }
-        if (modalType === 'add') {
-            setCourses([...courses, { ...newCourse, students: Number(newCourse.students) || 0, avgAttendance: 0, todayPresent: 0, todayLate: 0, todayAbsent: 0 }]);
-            showNotification(`Course ${newCourse.id} added`);
-        } else {
-            setCourses(courses.map(c => c.id === selectedCourse.id ? { ...c, ...newCourse } : c));
-            showNotification(`Course ${newCourse.id} updated`);
+
+        const courseExists = courses.some(c => c.id === newCourse.id);
+        if (courseExists) {
+            showNotification('This course is already in your list', 'error');
+            return;
         }
-        setShowModal(false);
+
+        try {
+            const user = auth.currentUser;
+            if (!user) {
+                showNotification('You must be logged in', 'error');
+                return;
+            }
+
+            const courseToAdd = {
+                courseId: newCourse.id,
+                courseName: newCourse.name,
+                schedule: newCourse.schedule,
+                room: newCourse.room,
+                capacity: parseInt(newCourse.capacity) || 0,
+                students: parseInt(newCourse.students) || 0,
+                avgAttendance: 0,
+                todayPresent: 0,
+                todayLate: 0,
+                todayAbsent: 0,
+                professorId: user.uid,
+                professorName: profData.name,
+                professorCode: profData.code,
+                assignedAt: new Date().toISOString()
+            };
+
+            setCourses(prev => [...prev, courseToAdd]);
+            
+            try {
+                await addDoc(collection(db, "professorCourses"), {
+                    ...courseToAdd,
+                    userId: user.uid
+                });    
+                showNotification(`Course ${newCourse.id} added successfully`);
+            } catch (firestoreError) {
+                console.error("Firestore error:", firestoreError);
+                showNotification('Course added locally but failed to save to database', 'warning');
+            }
+
+            setShowModal(false);
+            setNewCourse({ id: '', name: '', schedule: '', room: '', students: '', capacity: '' });
+
+        } catch (error) {
+            console.error("Error saving course:", error);
+            showNotification('Error saving course. Please try again.', 'error');
+        }
     };
 
     const updateAttendance = (courseId, type) => {
@@ -191,15 +404,208 @@ export default function ProfessorDashboard() {
         showNotification(`Attendance updated for ${courseId}`);
     };
 
-    const duplicateCourse = (course) => {
-        const newId = course.id + ' Copy';
-        setCourses([...courses, { ...course, id: newId, name: course.name + ' (Copy)' }]);
-        showNotification(`Course duplicated as ${newId}`);
+    const exportData = () => {
+        const dataStr = JSON.stringify(courses, null, 2);
+        Alert.alert('Export Data', 'Data copied to clipboard. You can paste it anywhere.', [
+            { text: 'OK' }
+        ]);
+        // In React Native, we can't directly download files like web
+        // You might want to implement sharing functionality here
+        showNotification('Data exported to console');
+        console.log('Exported Courses:', courses);
     };
 
-    const totalStudents = courses.reduce((sum, c) => sum + c.students, 0);
-    const avgAttendance = Math.round(courses.reduce((sum, c) => sum + c.avgAttendance, 0) / (courses.length || 1));
-    const totalPresent = courses.reduce((sum, c) => sum + c.todayPresent, 0);
+    const totalStudents = courses.reduce((sum, c) => sum + (c.students || 0), 0);
+    const avgAttendance = Math.round(courses.reduce((sum, c) => sum + (c.avgAttendance || 0), 0) / (courses.length || 1));
+    const totalPresent = courses.reduce((sum, c) => sum + (c.todayPresent || 0), 0);
+
+    const weeklyData = [
+        { day: 'Mon', value: 92 },
+        { day: 'Tue', value: 88 },
+        { day: 'Wed', value: 95 },
+        { day: 'Thu', value: 89 },
+        { day: 'Fri', value: 93 }
+    ];
+
+    const renderDashboard = () => (
+        <View>
+            {/* Stats Cards */}
+            <View style={styles.statsGrid}>
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>Total Courses</Text>
+                    <Text style={styles.statValue}>{courses.length}</Text>
+                </View>
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>Total Students</Text>
+                    <Text style={styles.statValue}>{totalStudents}</Text>
+                </View>
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>Avg Attendance</Text>
+                    <Text style={styles.statValue}>{avgAttendance}%</Text>
+                </View>
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>Present Today</Text>
+                    <Text style={styles.statValue}>{totalPresent}</Text>
+                </View>
+            </View>
+
+            {/* Quick Actions */}
+            <View style={styles.quickActionsGrid}>
+                <TouchableOpacity style={[styles.actionCard, styles.cardBlue]} onPress={openAddModal}>
+                    <Feather name="book-open" size={28} color="#fff" />
+                    <Text style={styles.actionText}>New Course</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionCard, styles.cardGreen]} onPress={exportData}>
+                    <Feather name="download" size={28} color="#fff" />
+                    <Text style={styles.actionText}>Export Data</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionCard, styles.cardYellow]} onPress={() => setIsPasswordModalOpen(true)}>
+                    <Feather name="key" size={28} color="#fff" />
+                    <Text style={styles.actionText}>Change Password</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionCard, styles.cardRed]} onPress={resetAllAttendance}>
+                    <Feather name="clock" size={28} color="#fff" />
+                    <Text style={styles.actionText}>Reset Today</Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* Courses Section */}
+            <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>My Courses</Text>
+                <TouchableOpacity onPress={() => setActiveTab('My Courses')}>
+                    <Text style={styles.viewAllText}>View All</Text>
+                </TouchableOpacity>
+            </View>
+
+            {filteredCourses.slice(0, 3).map(course => (
+                <View key={course.id} style={styles.courseCard}>
+                    <View style={styles.courseHeader}>
+                        <Text style={styles.courseCode}>{course.id}</Text>
+                        <View style={styles.courseHeaderActions}>
+                            <TouchableOpacity onPress={() => deleteCourse(course.id)} style={styles.iconButton}>
+                                <Feather name="trash-2" size={16} color="#ef4444" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                    <Text style={styles.courseName}>{course.name}</Text>
+                    <View style={styles.courseDetails}>
+                        <Text style={styles.courseMeta}>
+                            <Feather name="clock" size={12} /> {course.schedule}
+                        </Text>
+                        <Text style={styles.courseMeta}>
+                            <Feather name="calendar" size={12} /> {course.room}
+                        </Text>
+                    </View>
+                    
+                    <View style={styles.attendanceSummary}>
+                        <View style={styles.attendanceItemPresent}>
+                            <Feather name="check-circle" size={14} color="#22c55e" />
+                            <Text style={styles.attendanceText}>{course.todayPresent} Present</Text>
+                        </View>
+                        <View style={styles.attendanceItemLate}>
+                            <Feather name="alert-circle" size={14} color="#eab308" />
+                            <Text style={styles.attendanceText}>{course.todayLate} Late</Text>
+                        </View>
+                        <View style={styles.attendanceItemAbsent}>
+                            <Feather name="x-circle" size={14} color="#ef4444" />
+                            <Text style={styles.attendanceText}>{course.todayAbsent} Absent</Text>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity style={styles.startAttendanceBtn} onPress={() => openAttendanceModal(course)}>
+                        <Text style={styles.startAttendanceText}>Start Attendance</Text>
+                    </TouchableOpacity>
+                </View>
+            ))}
+
+            {/* Chart Card */}
+            <View style={styles.chartCard}>
+                <View style={styles.chartHeader}>
+                    <Text style={styles.chartTitle}>Weekly Attendance Overview</Text>
+                    <Text style={styles.chartBadge}>Last 5 days</Text>
+                </View>
+                <View style={styles.chartBars}>
+                    {weeklyData.map((item, i) => (
+                        <View key={i} style={styles.barItem}>
+                            <View style={[styles.bar, { height: item.value * 2 }]} />
+                            <Text style={styles.barDay}>{item.day}</Text>
+                            <Text style={styles.barValue}>{item.value}%</Text>
+                        </View>
+                    ))}
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderMyCourses = () => (
+        <View>
+            <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>All Courses ({filteredCourses.length})</Text>
+                <TouchableOpacity style={styles.addBtnPrimary} onPress={openAddModal}>
+                    <Text style={styles.addBtnPrimaryText}>Add Course</Text>
+                </TouchableOpacity>
+            </View>
+
+            {filteredCourses.length === 0 ? (
+                <View style={styles.emptyState}>
+                    <Text style={styles.emptyText}>No courses found.</Text>
+                </View>
+            ) : (
+                filteredCourses.map(course => (
+                    <View key={course.id} style={styles.courseCard}>
+                        <View style={styles.courseHeader}>
+                            <Text style={styles.courseCode}>{course.id}</Text>
+                            <Text style={styles.courseSchedule}>{course.schedule}</Text>
+                        </View>
+                        <Text style={styles.courseName}>{course.name}</Text>
+                        <Text style={styles.courseMeta}>{course.room} • {course.students} Students</Text>
+                        
+                        <View style={styles.attendanceBadge}>
+                            <Text style={styles.attendanceBadgeText}>Avg: {course.avgAttendance}%</Text>
+                        </View>
+
+                        <View style={styles.attendanceButtons}>
+                            <TouchableOpacity style={styles.btnPresent} onPress={() => updateAttendance(course.id, 'present')}>
+                                <Text style={styles.btnTextSmall}>+Present</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btnLate} onPress={() => updateAttendance(course.id, 'late')}>
+                                <Text style={styles.btnTextSmall}>+Late</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btnAbsent} onPress={() => updateAttendance(course.id, 'absent')}>
+                                <Text style={styles.btnTextSmall}>+Absent</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.todayStats}>
+                            <Text style={styles.statP}>{course.todayPresent} P</Text>
+                            <Text style={styles.statL}>{course.todayLate} L</Text>
+                            <Text style={styles.statA}>{course.todayAbsent} A</Text>
+                        </View>
+
+                        <View style={styles.actionButtonsRow}>
+                            <TouchableOpacity style={styles.btnStart} onPress={() => openAttendanceModal(course)}>
+                                <Text style={styles.btnTextWhite}>Start</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btnReset} onPress={() => resetDailyAttendance(course.id)}>
+                                <Text style={styles.btnTextBlue}>Reset</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btnDelete} onPress={() => deleteCourse(course.id)}>
+                                <Text style={styles.btnTextRed}>Delete</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ))
+            )}
+        </View>
+    );
+
+    const renderUnderDevelopment = () => (
+        <View style={styles.underDevelopment}>
+            <Feather name="settings" size={60} color="#94a3b8" />
+            <Text style={styles.devTitle}>This page is currently under development</Text>
+            <Text style={styles.devText}>Check back soon for updates!</Text>
+        </View>
+    );
 
     if (isLoading) {
         return (
@@ -221,7 +627,14 @@ export default function ProfessorDashboard() {
                 <View>
                     <Text style={styles.welcomeText}>Welcome back,</Text>
                     <Text style={styles.userName}>{profData.name}</Text>
-                    <Text style={styles.userIdText}>Code: {profData.code}</Text>
+                    <Text style={styles.userIdText}>ID: {profData.code}</Text>
+                    
+                    {/* Digital ID Button - NEW */}
+                    <TouchableOpacity style={styles.digitalIdButton} onPress={openDigitalID}>
+                        <Feather name="shield" size={14} color="#fff" />
+                        <Text style={styles.digitalIdButtonText}>Digital ID</Text>
+                    </TouchableOpacity>
+
                     {profileImage && (
                         <TouchableOpacity onPress={removeProfileImage}>
                             <Text style={styles.removeText}>Remove Photo</Text>
@@ -236,21 +649,51 @@ export default function ProfessorDashboard() {
                             <Text style={styles.avatarText}>
                                 {profData.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)}
                             </Text>
-                            <View style={styles.addPhotoBadge}><Text style={styles.addPhotoText}>+</Text></View>
+                            <View style={styles.addPhotoBadge}>
+                                <Text style={styles.addPhotoText}>+</Text>
+                            </View>
                         </View>
                     )}
                 </TouchableOpacity>
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topNav} contentContainerStyle={styles.topNavContent}>
-                <TouchableOpacity style={styles.navItemActive}><Text style={styles.navTextActive}>Dashboard</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}><Text style={styles.navText}>My Courses</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}><Text style={styles.navText}>Schedule</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.navItemLogout} onPress={handleLogout}><Text style={styles.navTextLogout}>Logout</Text></TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.navItem, activeTab === 'Dashboard' && styles.navItemActive]} 
+                    onPress={() => setActiveTab('Dashboard')}
+                >
+                    <Text style={[styles.navText, activeTab === 'Dashboard' && styles.navTextActive]}>Dashboard</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.navItem, activeTab === 'My Courses' && styles.navItemActive]} 
+                    onPress={() => setActiveTab('My Courses')}
+                >
+                    <Text style={[styles.navText, activeTab === 'My Courses' && styles.navTextActive]}>My Courses</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.navItem, activeTab === 'Schedule' && styles.navItemActive]} 
+                    onPress={() => setActiveTab('Schedule')}
+                >
+                    <Text style={[styles.navText, activeTab === 'Schedule' && styles.navTextActive]}>Schedule</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.navItem, activeTab === 'Analytics' && styles.navItemActive]} 
+                    onPress={() => setActiveTab('Analytics')}
+                >
+                    <Text style={[styles.navText, activeTab === 'Analytics' && styles.navTextActive]}>Analytics</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.navItem, activeTab === 'Settings' && styles.navItemActive]} 
+                    onPress={() => setActiveTab('Settings')}
+                >
+                    <Text style={[styles.navText, activeTab === 'Settings' && styles.navTextActive]}>Settings</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItemLogout} onPress={handleLogout}>
+                    <Text style={styles.navTextLogout}>Logout</Text>
+                </TouchableOpacity>
             </ScrollView>
 
             <ScrollView style={styles.mainContent} showsVerticalScrollIndicator={false}>
-                
                 <TextInput
                     style={styles.searchInput}
                     placeholder="Search courses..."
@@ -258,114 +701,242 @@ export default function ProfessorDashboard() {
                     onChangeText={setSearchTerm}
                 />
 
-                <View style={styles.statsGrid}>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>Total Courses</Text>
-                        <Text style={styles.statValue}>{courses.length}</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>Total Students</Text>
-                        <Text style={styles.statValue}>{totalStudents}</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>Avg Attendance</Text>
-                        <Text style={styles.statValue}>{avgAttendance}%</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>Present Today</Text>
-                        <Text style={styles.statValue}>{totalPresent}</Text>
-                    </View>
-                </View>
-
-                <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>My Courses ({filteredCourses.length})</Text>
-                    <TouchableOpacity style={styles.addBtnPrimary} onPress={openAddModal}>
-                        <Text style={styles.addBtnPrimaryText}>Add Course</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {filteredCourses.length === 0 ? (
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyText}>No courses found.</Text>
-                    </View>
-                ) : (
-                    filteredCourses.map(course => (
-                        <View key={course.id} style={styles.courseCard}>
-                            <View style={styles.courseHeader}>
-                                <Text style={styles.courseCode}>{course.id}</Text>
-                                <Text style={styles.courseSchedule}>{course.schedule}</Text>
-                            </View>
-                            <Text style={styles.courseName}>{course.name}</Text>
-                            <Text style={styles.courseMeta}>{course.room} • {course.students} Students</Text>
-                            
-                            <View style={styles.attendanceBadge}>
-                                <Text style={styles.attendanceBadgeText}>Avg: {course.avgAttendance}%</Text>
-                            </View>
-
-                            <View style={styles.attendanceButtons}>
-                                <TouchableOpacity style={styles.btnPresent} onPress={() => updateAttendance(course.id, 'present')}>
-                                    <Text style={styles.btnTextSmall}>+Present</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.btnLate} onPress={() => updateAttendance(course.id, 'late')}>
-                                    <Text style={styles.btnTextSmall}>+Late</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.btnAbsent} onPress={() => updateAttendance(course.id, 'absent')}>
-                                    <Text style={styles.btnTextSmall}>+Absent</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={styles.todayStats}>
-                                <Text style={styles.statP}>{course.todayPresent} P</Text>
-                                <Text style={styles.statL}>{course.todayLate} L</Text>
-                                <Text style={styles.statA}>{course.todayAbsent} A</Text>
-                            </View>
-
-                            <View style={styles.actionButtonsRow}>
-                                <TouchableOpacity style={styles.btnStart} onPress={() => openAttendanceModal(course)}>
-                                    <Text style={styles.btnTextWhite}>Start</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.btnEdit} onPress={() => openEditModal(course)}>
-                                    <Text style={styles.btnTextBlue}>Edit</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.btnEdit} onPress={() => duplicateCourse(course)}>
-                                    <Text style={styles.btnTextBlue}>Copy</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.btnDelete} onPress={() => deleteCourse(course.id)}>
-                                    <Text style={styles.btnTextRed}>Del</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    ))
-                )}
+                {activeTab === 'Dashboard' && renderDashboard()}
+                {activeTab === 'My Courses' && renderMyCourses()}
+                {(activeTab === 'Students' || activeTab === 'Schedule' || activeTab === 'Analytics' || activeTab === 'Settings') && renderUnderDevelopment()}
+                
                 <View style={{ height: 50 }} />
             </ScrollView>
 
-            <Modal visible={showModal} transparent animationType="slide">
+            {/* Password Modal */}
+            <Modal visible={isPasswordModalOpen} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Change Password</Text>
+                        
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="Current Password"
+                            secureTextEntry
+                            value={passwordFields.currentPassword}
+                            onChangeText={(t) => handlePasswordInputChange('currentPassword', t)}
+                        />
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="New Password"
+                            secureTextEntry
+                            value={passwordFields.newPassword}
+                            onChangeText={(t) => handlePasswordInputChange('newPassword', t)}
+                        />
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="Confirm Password"
+                            secureTextEntry
+                            value={passwordFields.confirmPassword}
+                            onChangeText={(t) => handlePasswordInputChange('confirmPassword', t)}
+                        />
+                        
+                        <Text style={styles.passwordRequirement}>
+                            Password must be at least 6 characters long
+                        </Text>
+
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsPasswordModalOpen(false)}>
+                                <Text style={styles.cancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.submitBtn} onPress={handlePasswordUpdate}>
+                                <Text style={styles.submitText}>Update</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Digital ID Modal - NEW */}
+            <Modal visible={isDigitalIdModalOpen} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, styles.digitalIdModal]}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Professor Digital ID Card</Text>
+                            <TouchableOpacity onPress={closeDigitalID} style={styles.closeButton}>
+                                <Feather name="x" size={20} color="#64748b" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Card Header */}
+                        <View style={styles.idCardHeader}>
+                            <View style={styles.idSchool}>
+                                <Feather name="home" size={24} color="#4361ee" />
+                                <View>
+                                    <Text style={styles.idSchoolName}>Cairo University</Text>
+                                    <Text style={styles.idCardType}>Professor Identification Card</Text>
+                                </View>
+                            </View>
+                            <Feather name="shield" size={32} color="#4361ee" />
+                        </View>
+
+                        {/* Card Body */}
+                        <View style={styles.idCardBody}>
+                            <View style={styles.idPhotoSection}>
+                                {profileImage ? (
+                                    <Image source={{ uri: profileImage }} style={styles.idPhoto} />
+                                ) : (
+                                    <View style={styles.idPhotoPlaceholder}>
+                                        <Text style={styles.idPhotoPlaceholderText}>
+                                            {profData.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)}
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={styles.idInfoSection}>
+                                <View style={styles.idField}>
+                                    <Text style={styles.idFieldLabel}>Professor Name</Text>
+                                    <Text style={styles.idFieldValue}>{profData.name}</Text>
+                                </View>
+                                <View style={styles.idField}>
+                                    <Text style={styles.idFieldLabel}>Professor ID</Text>
+                                    <Text style={styles.idFieldValue}>{profData.code}</Text>
+                                </View>
+                                <View style={styles.idField}>
+                                    <Text style={styles.idFieldLabel}>Department</Text>
+                                    <Text style={styles.idFieldValue}>Computer Science</Text>
+                                </View>
+                                <View style={styles.idField}>
+                                    <Text style={styles.idFieldLabel}>Email</Text>
+                                    <Text style={styles.idFieldValue}>{auth.currentUser?.email || 'professor@yallaclass.com'}</Text>
+                                </View>
+                                <View style={styles.idField}>
+                                    <Text style={styles.idFieldLabel}>Courses</Text>
+                                    <Text style={styles.idFieldValue}>{courses.length} Active Courses</Text>
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* Card Footer with QR */}
+                        <View style={styles.idCardFooter}>
+                            <View style={styles.idQRLarge}>
+                                <View style={styles.qrPlaceholder}>
+                                    <Text style={styles.qrText}>QR</Text>
+                                    <Text style={styles.qrSubtext}>Scan to verify</Text>
+                                </View>
+                            </View>
+                            <View style={styles.idValidity}>
+                                <View style={styles.idValidityBadge}>
+                                    <Feather name="check-circle" size={16} color="#22c55e" />
+                                    <Text style={styles.idValidityText}>FACULTY ID 2026</Text>
+                                </View>
+                                <Text style={styles.idScanText}>Scan QR code to verify faculty identity</Text>
+                                <Text style={styles.idIssueDate}>Issued: March 2026 | Valid through: 2028</Text>
+                            </View>
+                        </View>
+
+                        <TouchableOpacity style={styles.closeIdButton} onPress={closeDigitalID}>
+                            <Text style={styles.closeIdButtonText}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Course Modal */}
+            <Modal visible={showModal} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, modalType === 'attendance' && styles.modalContentCentered]}>
                         {modalType === 'attendance' ? (
                             <View style={{ alignItems: 'center' }}>
-                                <Text style={styles.modalTitle}>Start Attendance</Text>
-                                <Text style={styles.modalSubtitle}>{selectedCourse?.name}</Text>
-                                <View style={styles.attendanceCodeBox}><Text style={styles.attendanceCodeText}>2478</Text></View>
-                                <Text style={styles.modalInstruction}>Share this code with students</Text>
+                                <Text style={styles.modalTitle}>Start Attendance Session</Text>
+                                <Text style={styles.modalSubtitle}>Course: {selectedCourse?.name}</Text>
+                                <View style={styles.attendanceCodeBox}>
+                                    <Text style={styles.attendanceCodeText}>2478</Text>
+                                </View>
+                                <Text style={styles.modalInstruction}>Share this 4-digit code with your students</Text>
+                                
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}><Text style={styles.cancelText}>Close</Text></TouchableOpacity>
-                                    <TouchableOpacity style={styles.submitBtn} onPress={() => { showNotification('Session started!'); setShowModal(false); }}><Text style={styles.submitText}>Start</Text></TouchableOpacity>
+                                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}>
+                                        <Text style={styles.cancelText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.submitBtn} onPress={() => { 
+                                        showNotification('Attendance session started successfully!'); 
+                                        setShowModal(false); 
+                                    }}>
+                                        <Text style={styles.submitText}>Start Session</Text>
+                                    </TouchableOpacity>
                                 </View>
                             </View>
                         ) : (
                             <ScrollView showsVerticalScrollIndicator={false}>
-                                <Text style={styles.modalTitle}>{modalType === 'add' ? 'Add Course' : 'Edit Course'}</Text>
-                                <TextInput style={styles.input} placeholder="Course ID" value={newCourse.id} onChangeText={t => setNewCourse({...newCourse, id: t})} />
-                                <TextInput style={styles.input} placeholder="Course Name" value={newCourse.name} onChangeText={t => setNewCourse({...newCourse, name: t})} />
-                                <TextInput style={styles.input} placeholder="Schedule" value={newCourse.schedule} onChangeText={t => setNewCourse({...newCourse, schedule: t})} />
-                                <TextInput style={styles.input} placeholder="Room" value={newCourse.room} onChangeText={t => setNewCourse({...newCourse, room: t})} />
-                                <TextInput style={styles.input} placeholder="Students" value={String(newCourse.students)} onChangeText={t => setNewCourse({...newCourse, students: t})} keyboardType="numeric" />
+                                <Text style={styles.modalTitle}>{modalType === 'add' ? 'Add New Course' : 'Edit Course'}</Text>
+                                
+                                {modalType === 'add' && (
+                                    <View style={styles.selectCourseContainer}>
+                                        <Text style={styles.selectCourseLabel}>Select Course You Want To Teach</Text>
+                                        <View style={styles.pickerWrapper}>
+                                            <TouchableOpacity 
+                                                style={styles.pickerButton}
+                                                onPress={() => {
+                                                    // Simple picker - you might want to use a proper picker modal
+                                                    const coursesList = adminCourses.map(c => `${c.courseId} - ${c.courseName}`).join('\n');
+                                                    Alert.alert('Available Courses', coursesList, [
+                                                        ...adminCourses.map(course => ({
+                                                            text: `${course.courseId} - ${course.courseName}`,
+                                                            onPress: () => handleSelectCourseFromAdmin(course.courseId)
+                                                        })),
+                                                        { text: 'Cancel', style: 'cancel' }
+                                                    ]);
+                                                }}
+                                            >
+                                                <Text style={newCourse.id ? styles.pickerTextSelected : styles.pickerTextPlaceholder}>
+                                                    {newCourse.id ? `${newCourse.id} - ${newCourse.name}` : '-- Choose a Course --'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                )}
+
+                                <TextInput 
+                                    style={styles.input} 
+                                    placeholder="Course ID" 
+                                    value={newCourse.id}
+                                    editable={false}
+                                />
+                                <TextInput 
+                                    style={styles.input} 
+                                    placeholder="Course Name" 
+                                    value={newCourse.name}
+                                    editable={false}
+                                />
+                                <TextInput 
+                                    style={styles.input} 
+                                    placeholder="Schedule" 
+                                    value={newCourse.schedule}
+                                    editable={false}
+                                />
+                                <TextInput 
+                                    style={styles.input} 
+                                    placeholder="Room" 
+                                    value={newCourse.room}
+                                    editable={false}
+                                />
+                                <TextInput 
+                                    style={styles.input} 
+                                    placeholder="Capacity" 
+                                    value={String(newCourse.capacity || '')}
+                                    editable={false}
+                                />
                                 
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
-                                    <TouchableOpacity style={styles.submitBtn} onPress={saveCourse}><Text style={styles.submitText}>Save</Text></TouchableOpacity>
+                                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}>
+                                        <Text style={styles.cancelText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.submitBtn, modalType === 'add' && !newCourse.id && styles.disabledBtn]} 
+                                        onPress={saveCourse}
+                                        disabled={modalType === 'add' && !newCourse.id}
+                                    >
+                                        <Text style={styles.submitText}>
+                                            {modalType === 'add' ? 'Confirm Addition' : 'Save Changes'}
+                                        </Text>
+                                    </TouchableOpacity>
                                 </View>
                             </ScrollView>
                         )}
@@ -377,90 +948,856 @@ export default function ProfessorDashboard() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f8fafc', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 40) + 10 : 45 },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
+    container: { 
+        flex: 1, 
+        backgroundColor: '#f8fafc', 
+        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 40) + 10 : 45 
+    },
+    center: { 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        backgroundColor: '#f8fafc' 
+    },
     
-    toast: { position: 'absolute', top: 50, left: 20, right: 20, padding: 15, borderRadius: 10, zIndex: 1000, elevation: 5 },
-    toastSuccess: { backgroundColor: '#4361ee' },
-    toastError: { backgroundColor: '#ef4444' },
-    toastText: { color: 'white', fontWeight: 'bold', textAlign: 'center' },
+    toast: { 
+        position: 'absolute', 
+        top: 50, 
+        left: 20, 
+        right: 20, 
+        padding: 15, 
+        borderRadius: 10, 
+        zIndex: 1000, 
+        elevation: 5 
+    },
+    toastSuccess: { 
+        backgroundColor: '#4361ee' 
+    },
+    toastError: { 
+        backgroundColor: '#ef4444' 
+    },
+    toastText: { 
+        color: 'white', 
+        fontWeight: 'bold', 
+        textAlign: 'center' 
+    },
 
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 15, backgroundColor: '#f8fafc' },
-    welcomeText: { fontSize: 16, color: '#64748b' },
-    userName: { fontSize: 22, fontWeight: 'bold', color: '#1e293b' },
-    userIdText: { fontSize: 14, color: '#4361ee', fontWeight: '600', marginTop: 2 },
-    removeText: { color: '#ef4444', fontSize: 12, marginTop: 5, fontWeight: 'bold' },
-    userAvatar: { backgroundColor: '#4361ee', width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', position: 'relative' },
-    userAvatarImage: { width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: '#4361ee' },
-    avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
-    addPhotoBadge: { position: 'absolute', bottom: -2, right: -2, backgroundColor: '#4caf50', width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
-    addPhotoText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+    header: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        paddingHorizontal: 20, 
+        paddingBottom: 15, 
+        backgroundColor: '#f8fafc' 
+    },
+    welcomeText: { 
+        fontSize: 16, 
+        color: '#64748b' 
+    },
+    userName: { 
+        fontSize: 22, 
+        fontWeight: 'bold', 
+        color: '#1e293b' 
+    },
+    userIdText: { 
+        fontSize: 14, 
+        color: '#4361ee', 
+        fontWeight: '600', 
+        marginTop: 2 
+    },
+    removeText: { 
+        color: '#ef4444', 
+        fontSize: 12, 
+        marginTop: 5, 
+        fontWeight: 'bold' 
+    },
+    userAvatar: { 
+        backgroundColor: '#4361ee', 
+        width: 56, 
+        height: 56, 
+        borderRadius: 28, 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        position: 'relative' 
+    },
+    userAvatarImage: { 
+        width: 56, 
+        height: 56, 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: '#4361ee' 
+    },
+    avatarText: { 
+        color: '#fff', 
+        fontWeight: 'bold', 
+        fontSize: 18 
+    },
+    addPhotoBadge: { 
+        position: 'absolute', 
+        bottom: -2, 
+        right: -2, 
+        backgroundColor: '#4caf50', 
+        width: 22, 
+        height: 22, 
+        borderRadius: 11, 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        borderWidth: 2, 
+        borderColor: '#fff' 
+    },
+    addPhotoText: { 
+        color: '#fff', 
+        fontSize: 14, 
+        fontWeight: 'bold' 
+    },
 
-    topNav: { backgroundColor: '#fff', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#e2e8f0', minHeight: 65, maxHeight: 65 },
-    topNavContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, paddingRight: 30 },
-    navItem: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f1f5f9', marginRight: 10 },
-    navItemActive: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: '#4361ee', marginRight: 10 },
-    navItemLogout: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: '#fee2e2', marginRight: 10 },
-    navText: { color: '#64748b', fontWeight: '600', fontSize: 13 },
-    navTextActive: { color: '#fff', fontWeight: '600', fontSize: 13 },
-    navTextLogout: { color: '#ef4444', fontWeight: '600', fontSize: 13 },
+    // Digital ID Button Styles - NEW
+    digitalIdButton: {
+        backgroundColor: '#4a90e2',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 15,
+        marginTop: 5,
+        alignSelf: 'flex-start',
+        gap: 4
+    },
+    digitalIdButtonText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 'bold'
+    },
 
-    mainContent: { padding: 15 },
-    searchInput: { backgroundColor: '#fff', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 15 },
+    topNav: { 
+        backgroundColor: '#fff', 
+        paddingVertical: 12, 
+        borderBottomWidth: 1, 
+        borderColor: '#e2e8f0', 
+        minHeight: 65, 
+        maxHeight: 65 
+    },
+    topNavContent: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        paddingHorizontal: 15, 
+        paddingRight: 30 
+    },
+    navItem: { 
+        paddingHorizontal: 18, 
+        paddingVertical: 8, 
+        borderRadius: 20, 
+        backgroundColor: '#f1f5f9', 
+        marginRight: 10 
+    },
+    navItemActive: { 
+        backgroundColor: '#4361ee' 
+    },
+    navItemLogout: { 
+        paddingHorizontal: 18, 
+        paddingVertical: 8, 
+        borderRadius: 20, 
+        backgroundColor: '#fee2e2', 
+        marginRight: 10 
+    },
+    navText: { 
+        color: '#64748b', 
+        fontWeight: '600', 
+        fontSize: 13 
+    },
+    navTextActive: { 
+        color: '#fff' 
+    },
+    navTextLogout: { 
+        color: '#ef4444', 
+        fontWeight: '600', 
+        fontSize: 13 
+    },
 
-    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 15 },
-    statCard: { width: '48%', backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#e2e8f0' },
-    statLabel: { color: '#64748b', fontSize: 12, marginBottom: 5 },
-    statValue: { fontSize: 20, fontWeight: 'bold', color: '#1e293b' },
+    mainContent: { 
+        padding: 15 
+    },
+    searchInput: { 
+        backgroundColor: '#fff', 
+        padding: 12, 
+        borderRadius: 10, 
+        borderWidth: 1, 
+        borderColor: '#e2e8f0', 
+        marginBottom: 15 
+    },
 
-    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-    sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
-    addBtnPrimary: { backgroundColor: '#4361ee', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8 },
-    addBtnPrimaryText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+    // Dashboard styles
+    quickActionsGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginBottom: 20
+    },
+    actionCard: {
+        width: '48%',
+        padding: 15,
+        borderRadius: 12,
+        marginBottom: 15,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    cardBlue: {
+        backgroundColor: '#4361ee'
+    },
+    cardGreen: {
+        backgroundColor: '#22c55e'
+    },
+    cardYellow: {
+        backgroundColor: '#eab308'
+    },
+    cardRed: {
+        backgroundColor: '#ef4444'
+    },
+    actionText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        marginTop: 5,
+        fontSize: 13
+    },
+    statsGrid: { 
+        flexDirection: 'row', 
+        flexWrap: 'wrap', 
+        justifyContent: 'space-between', 
+        marginBottom: 15 
+    },
+    statCard: { 
+        width: '48%', 
+        backgroundColor: '#fff', 
+        padding: 15, 
+        borderRadius: 12, 
+        marginBottom: 15, 
+        borderWidth: 1, 
+        borderColor: '#e2e8f0' 
+    },
+    statLabel: { 
+        color: '#64748b', 
+        fontSize: 12, 
+        marginBottom: 5 
+    },
+    statValue: { 
+        fontSize: 20, 
+        fontWeight: 'bold', 
+        color: '#1e293b' 
+    },
 
-    courseCard: { backgroundColor: '#fff', padding: 15, borderRadius: 16, marginBottom: 15, borderWidth: 1, borderColor: '#e2e8f0' },
-    courseHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-    courseCode: { color: '#4361ee', fontWeight: 'bold' },
-    courseSchedule: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, fontSize: 11, color: '#64748b' },
-    courseName: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 5 },
-    courseMeta: { color: '#64748b', fontSize: 13 },
+    sectionHeader: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: 15 
+    },
+    sectionTitle: { 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        color: '#1e293b' 
+    },
+    viewAllText: {
+        color: '#4361ee',
+        fontWeight: '600'
+    },
+    addBtnPrimary: { 
+        backgroundColor: '#4361ee', 
+        paddingHorizontal: 15, 
+        paddingVertical: 8, 
+        borderRadius: 8 
+    },
+    addBtnPrimaryText: { 
+        color: '#fff', 
+        fontWeight: 'bold', 
+        fontSize: 13 
+    },
+
+    courseCard: { 
+        backgroundColor: '#fff', 
+        padding: 15, 
+        borderRadius: 16, 
+        marginBottom: 15, 
+        borderWidth: 1, 
+        borderColor: '#e2e8f0' 
+    },
+    courseHeader: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: 8 
+    },
+    courseHeaderActions: {
+        flexDirection: 'row',
+        gap: 8
+    },
+    iconButton: {
+        padding: 5
+    },
+    courseCode: { 
+        color: '#4361ee', 
+        fontWeight: 'bold' 
+    },
+    courseSchedule: { 
+        backgroundColor: '#f1f5f9', 
+        paddingHorizontal: 8, 
+        paddingVertical: 2, 
+        borderRadius: 10, 
+        fontSize: 11, 
+        color: '#64748b' 
+    },
+    courseName: { 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        color: '#1e293b', 
+        marginBottom: 5 
+    },
+    courseMeta: { 
+        color: '#64748b', 
+        fontSize: 13,
+        marginVertical: 2
+    },
+    courseDetails: {
+        marginVertical: 5
+    },
     
-    attendanceBadge: { backgroundColor: '#f1f5f9', alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 15, marginTop: 10 },
-    attendanceBadgeText: { color: '#4361ee', fontWeight: 'bold', fontSize: 12 },
+    attendanceBadge: { 
+        backgroundColor: '#f1f5f9', 
+        alignSelf: 'flex-start', 
+        paddingHorizontal: 12, 
+        paddingVertical: 5, 
+        borderRadius: 15, 
+        marginTop: 10 
+    },
+    attendanceBadgeText: { 
+        color: '#4361ee', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
 
-    attendanceButtons: { flexDirection: 'row', gap: 8, marginTop: 15 },
-    btnPresent: { backgroundColor: '#22c55e', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-    btnLate: { backgroundColor: '#eab308', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-    btnAbsent: { backgroundColor: '#ef4444', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-    btnTextSmall: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+    attendanceButtons: { 
+        flexDirection: 'row', 
+        gap: 8, 
+        marginTop: 15 
+    },
+    btnPresent: { 
+        backgroundColor: '#22c55e', 
+        paddingHorizontal: 10, 
+        paddingVertical: 6, 
+        borderRadius: 6 
+    },
+    btnLate: { 
+        backgroundColor: '#eab308', 
+        paddingHorizontal: 10, 
+        paddingVertical: 6, 
+        borderRadius: 6 
+    },
+    btnAbsent: { 
+        backgroundColor: '#ef4444', 
+        paddingHorizontal: 10, 
+        paddingVertical: 6, 
+        borderRadius: 6 
+    },
+    btnTextSmall: { 
+        color: '#fff', 
+        fontSize: 11, 
+        fontWeight: 'bold' 
+    },
 
-    todayStats: { flexDirection: 'row', gap: 15, backgroundColor: '#f8fafc', padding: 10, borderRadius: 8, marginTop: 10 },
-    statP: { color: '#22c55e', fontWeight: 'bold', fontSize: 12 },
-    statL: { color: '#eab308', fontWeight: 'bold', fontSize: 12 },
-    statA: { color: '#ef4444', fontWeight: 'bold', fontSize: 12 },
+    todayStats: { 
+        flexDirection: 'row', 
+        gap: 15, 
+        backgroundColor: '#f8fafc', 
+        padding: 10, 
+        borderRadius: 8, 
+        marginTop: 10 
+    },
+    statP: { 
+        color: '#22c55e', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
+    statL: { 
+        color: '#eab308', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
+    statA: { 
+        color: '#ef4444', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
 
-    actionButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15, borderTopWidth: 1, borderColor: '#f1f5f9', paddingTop: 15 },
-    btnStart: { backgroundColor: '#4361ee', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8, flex: 1, marginRight: 5, alignItems: 'center' },
-    btnEdit: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#4361ee', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8, flex: 1, marginHorizontal: 5, alignItems: 'center' },
-    btnDelete: { backgroundColor: '#fee2e2', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8, flex: 1, marginLeft: 5, alignItems: 'center' },
-    btnTextWhite: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-    btnTextBlue: { color: '#4361ee', fontWeight: 'bold', fontSize: 12 },
-    btnTextRed: { color: '#ef4444', fontWeight: 'bold', fontSize: 12 },
+    // New attendance summary styles
+    attendanceSummary: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        backgroundColor: '#f8fafc',
+        padding: 10,
+        borderRadius: 8,
+        marginTop: 10,
+        marginBottom: 10
+    },
+    attendanceItemPresent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4
+    },
+    attendanceItemLate: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4
+    },
+    attendanceItemAbsent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4
+    },
+    attendanceText: {
+        fontSize: 11,
+        color: '#1e293b'
+    },
 
-    emptyState: { padding: 30, alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', borderStyle: 'dashed' },
-    emptyText: { color: '#94a3b8', fontStyle: 'italic' },
+    startAttendanceBtn: {
+        backgroundColor: '#4361ee',
+        padding: 10,
+        borderRadius: 8,
+        alignItems: 'center',
+        marginTop: 5
+    },
+    startAttendanceText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 13
+    },
 
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-    modalContent: { backgroundColor: '#fff', padding: 20, borderRadius: 20 },
-    modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 10 },
-    modalSubtitle: { color: '#64748b', marginBottom: 15 },
-    attendanceCodeBox: { backgroundColor: '#f1f5f9', padding: 20, borderRadius: 12, borderWidth: 2, borderColor: '#4361ee', borderStyle: 'dashed', marginBottom: 15, width: '100%', alignItems: 'center' },
-    attendanceCodeText: { fontSize: 36, fontWeight: 'bold', color: '#4361ee', letterSpacing: 8 },
-    modalInstruction: { color: '#64748b', marginBottom: 20 },
-    input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 12, color: '#1e293b' },
-    modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 10 },
-    cancelBtn: { paddingVertical: 12, borderRadius: 10, backgroundColor: '#f1f5f9', flex: 1, alignItems: 'center' },
-    cancelText: { color: '#64748b', fontWeight: 'bold' },
-    submitBtn: { paddingVertical: 12, borderRadius: 10, backgroundColor: '#4361ee', flex: 1, alignItems: 'center' },
-    submitText: { color: '#fff', fontWeight: 'bold' }
+    actionButtonsRow: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        marginTop: 15, 
+        borderTopWidth: 1, 
+        borderColor: '#f1f5f9', 
+        paddingTop: 15 
+    },
+    btnStart: { 
+        backgroundColor: '#4361ee', 
+        paddingHorizontal: 15, 
+        paddingVertical: 8, 
+        borderRadius: 8, 
+        flex: 1, 
+        marginRight: 5, 
+        alignItems: 'center' 
+    },
+    btnReset: { 
+        backgroundColor: '#fff', 
+        borderWidth: 1, 
+        borderColor: '#4361ee', 
+        paddingHorizontal: 15, 
+        paddingVertical: 8, 
+        borderRadius: 8, 
+        flex: 1, 
+        marginHorizontal: 5, 
+        alignItems: 'center' 
+    },
+    btnDelete: { 
+        backgroundColor: '#fee2e2', 
+        paddingHorizontal: 15, 
+        paddingVertical: 8, 
+        borderRadius: 8, 
+        flex: 1, 
+        marginLeft: 5, 
+        alignItems: 'center' 
+    },
+    btnTextWhite: { 
+        color: '#fff', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
+    btnTextBlue: { 
+        color: '#4361ee', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
+    btnTextRed: { 
+        color: '#ef4444', 
+        fontWeight: 'bold', 
+        fontSize: 12 
+    },
+
+    // Chart styles
+    chartCard: {
+        backgroundColor: '#fff',
+        padding: 15,
+        borderRadius: 16,
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: '#e2e8f0'
+    },
+    chartHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 15
+    },
+    chartTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#1e293b'
+    },
+    chartBadge: {
+        backgroundColor: '#f1f5f9',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        fontSize: 11,
+        color: '#64748b'
+    },
+    chartBars: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        alignItems: 'flex-end',
+        height: 200
+    },
+    barItem: {
+        alignItems: 'center',
+        width: 40
+    },
+    bar: {
+        width: 20,
+        backgroundColor: '#4361ee',
+        borderRadius: 10,
+        marginBottom: 5
+    },
+    barDay: {
+        fontSize: 12,
+        color: '#64748b'
+    },
+    barValue: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#1e293b',
+        marginTop: 2
+    },
+
+    emptyState: { 
+        padding: 30, 
+        alignItems: 'center', 
+        backgroundColor: '#fff', 
+        borderRadius: 12, 
+        borderWidth: 1, 
+        borderColor: '#e2e8f0', 
+        borderStyle: 'dashed' 
+    },
+    emptyText: { 
+        color: '#94a3b8', 
+        fontStyle: 'italic' 
+    },
+
+    modalOverlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.5)', 
+        justifyContent: 'center', 
+        padding: 20 
+    },
+    modalContent: { 
+        backgroundColor: '#fff', 
+        padding: 20, 
+        borderRadius: 20,
+        maxHeight: '80%'
+    },
+    modalContentCentered: {
+        justifyContent: 'center'
+    },
+    modalTitle: { 
+        fontSize: 20, 
+        fontWeight: 'bold', 
+        color: '#1e293b', 
+        marginBottom: 10 
+    },
+    modalSubtitle: { 
+        color: '#64748b', 
+        marginBottom: 15 
+    },
+    attendanceCodeBox: { 
+        backgroundColor: '#f1f5f9', 
+        padding: 20, 
+        borderRadius: 12, 
+        borderWidth: 2, 
+        borderColor: '#4361ee', 
+        borderStyle: 'dashed', 
+        marginBottom: 15, 
+        width: '100%', 
+        alignItems: 'center' 
+    },
+    attendanceCodeText: { 
+        fontSize: 36, 
+        fontWeight: 'bold', 
+        color: '#4361ee', 
+        letterSpacing: 8 
+    },
+    modalInstruction: { 
+        color: '#64748b', 
+        marginBottom: 20 
+    },
+    input: { 
+        backgroundColor: '#f8fafc', 
+        borderWidth: 1, 
+        borderColor: '#e2e8f0', 
+        borderRadius: 10, 
+        padding: 12, 
+        marginBottom: 12, 
+        color: '#1e293b' 
+    },
+    modalButtons: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        marginTop: 10, 
+        gap: 10 
+    },
+    cancelBtn: { 
+        paddingVertical: 12, 
+        borderRadius: 10, 
+        backgroundColor: '#f1f5f9', 
+        flex: 1, 
+        alignItems: 'center' 
+    },
+    cancelText: { 
+        color: '#64748b', 
+        fontWeight: 'bold' 
+    },
+    submitBtn: { 
+        paddingVertical: 12, 
+        borderRadius: 10, 
+        backgroundColor: '#4361ee', 
+        flex: 1, 
+        alignItems: 'center' 
+    },
+    disabledBtn: {
+        backgroundColor: '#94a3b8'
+    },
+    submitText: { 
+        color: '#fff', 
+        fontWeight: 'bold' 
+    },
+
+    // Password modal specific styles
+    passwordRequirement: {
+        color: '#64748b',
+        fontSize: 12,
+        marginBottom: 15,
+        fontStyle: 'italic'
+    },
+
+    // Select course styles
+    selectCourseContainer: {
+        marginBottom: 15,
+        borderWidth: 2,
+        borderColor: '#4a90e2',
+        borderRadius: 10,
+        padding: 10
+    },
+    selectCourseLabel: {
+        color: '#4a90e2',
+        fontWeight: 'bold',
+        marginBottom: 8
+    },
+    pickerWrapper: {
+        borderWidth: 1,
+        borderColor: '#4a90e2',
+        borderRadius: 8,
+        overflow: 'hidden'
+    },
+    pickerButton: {
+        padding: 12,
+        backgroundColor: '#f8fafc'
+    },
+    pickerTextPlaceholder: {
+        color: '#94a3b8'
+    },
+    pickerTextSelected: {
+        color: '#1e293b',
+        fontWeight: '500'
+    },
+
+    // Under development styles
+    underDevelopment: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 40,
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderStyle: 'dashed'
+    },
+    devTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#1e293b',
+        marginTop: 15,
+        textAlign: 'center'
+    },
+    devText: {
+        color: '#64748b',
+        marginTop: 5,
+        textAlign: 'center'
+    },
+
+    // Digital ID Modal Styles - NEW
+    digitalIdModal: {
+        maxHeight: '90%',
+        padding: 15
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 15
+    },
+    closeButton: {
+        padding: 5
+    },
+    idCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#f8fafc',
+        padding: 15,
+        borderRadius: 12,
+        marginBottom: 15
+    },
+    idSchool: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10
+    },
+    idSchoolName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#1e293b'
+    },
+    idCardType: {
+        fontSize: 12,
+        color: '#64748b'
+    },
+    idCardBody: {
+        flexDirection: 'row',
+        backgroundColor: '#fff',
+        padding: 15,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        marginBottom: 15,
+        gap: 15
+    },
+    idPhotoSection: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        overflow: 'hidden'
+    },
+    idPhoto: {
+        width: '100%',
+        height: '100%'
+    },
+    idPhotoPlaceholder: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#4361ee',
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    idPhotoPlaceholderText: {
+        color: '#fff',
+        fontSize: 24,
+        fontWeight: 'bold'
+    },
+    idInfoSection: {
+        flex: 1,
+        gap: 8
+    },
+    idField: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+    },
+    idFieldLabel: {
+        fontSize: 11,
+        color: '#64748b'
+    },
+    idFieldValue: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#1e293b'
+    },
+    idCardFooter: {
+        flexDirection: 'row',
+        backgroundColor: '#f8fafc',
+        padding: 15,
+        borderRadius: 12,
+        gap: 15
+    },
+    idQRLarge: {
+        width: 80,
+        height: 80,
+        backgroundColor: '#fff',
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#e2e8f0'
+    },
+    qrPlaceholder: {
+        alignItems: 'center'
+    },
+    qrText: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#4361ee'
+    },
+    qrSubtext: {
+        fontSize: 8,
+        color: '#64748b',
+        marginTop: 2
+    },
+    idValidity: {
+        flex: 1,
+        justifyContent: 'center'
+    },
+    idValidityBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#22c55e20',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        gap: 4,
+        marginBottom: 5
+    },
+    idValidityText: {
+        color: '#22c55e',
+        fontSize: 11,
+        fontWeight: 'bold'
+    },
+    idScanText: {
+        fontSize: 11,
+        color: '#64748b',
+        marginBottom: 2
+    },
+    idIssueDate: {
+        fontSize: 10,
+        color: '#94a3b8'
+    },
+    closeIdButton: {
+        backgroundColor: '#4361ee',
+        padding: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+        marginTop: 15
+    },
+    closeIdButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 16
+    }
 });
