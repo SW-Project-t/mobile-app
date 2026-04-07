@@ -546,7 +546,7 @@ export default function StudentDashboard() {
         try {
             const token = await AsyncStorage.getItem('token');
             
-            const response = await fetch('http://localhost:3001//api/attendance/update-risk', {
+            const response = await fetch('http://localhost:3001/api/attendance/update-risk', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
