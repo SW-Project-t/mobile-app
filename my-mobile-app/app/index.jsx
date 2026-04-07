@@ -46,7 +46,7 @@ export default function Login() {
       const idToken = await user.getIdToken();
       
       const apiUrl = Platform.OS === 'web' 
-        ? 'https://yallaclass-backend-production.up.railway.app//verify-login' 
+        ? 'http://localhost:3001//verify-login' 
         : 'http://192.168.1.103:3001/verify-login';
 
       let tokenToSave = idToken;
