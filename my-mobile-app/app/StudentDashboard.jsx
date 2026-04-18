@@ -118,12 +118,17 @@ export default function StudentDashboard() {
     const [loading, setLoading] = useState(false);
     const [checkingInCourseId, setCheckingInCourseId] = useState(null); 
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+    const showNotification = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
+};
     
     const [passwordFields, setPasswordFields] = useState({
         currentPassword: '', newPassword: '', confirmPassword: ''
     });
     
-    const ALLOWED_RADIUS = 50;
+    const ALLOWED_RADIUS = 30;
 
     useEffect(() => {
         const loadSavedData = async () => {
