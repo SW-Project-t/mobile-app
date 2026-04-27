@@ -540,7 +540,7 @@ export default function StudentDashboard() {
     const updateRiskOnServer = async (uid, riskLevel) => {
         try {
             const token = await AsyncStorage.getItem('token');
-            await fetch('http://localhost:3001/api/attendance/update-risk', {
+            await fetch('https://backend-2-qju2.onrender.com/api/attendance/update-risk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ uid: uid, riskLevel: riskLevel })
