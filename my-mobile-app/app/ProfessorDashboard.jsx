@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
   TextInput, Modal, Alert, ActivityIndicator, 
-  Platform, StatusBar, SafeAreaView, Image, Linking 
+  Platform, StatusBar, SafeAreaView, Image 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
@@ -14,6 +14,8 @@ import { onAuthStateChanged, updatePassword, reauthenticateWithCredential, Email
 import * as ImagePicker from 'expo-image-picker';
 import QRCode from 'react-native-qrcode-svg';
 import * as Location from 'expo-location'; 
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 
 const STORAGE_KEYS = {
     PROF_IMAGE: 'yallaclass_prof_image'
@@ -53,6 +55,12 @@ export default function ProfessorDashboard() {
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [activeSessions, setActiveSessions] = useState({});
   const [cumulativeAttendanceStats, setCumulativeAttendanceStats] = useState({ courses: [], overall: {} });
+  
+  // States for viewing live attendees
+  const [isAttendeesModalOpen, setIsAttendeesModalOpen] = useState(false);
+  const [liveAttendees, setLiveAttendees] = useState([]);
+  const [selectedCourseForAttendees, setSelectedCourseForAttendees] = useState(null);
+  const [attendeesListener, setAttendeesListener] = useState(null);
 
   // Messages States
   const [messages, setMessages] = useState([]);
@@ -157,7 +165,9 @@ export default function ProfessorDashboard() {
     const q = query(collection(db, "active_sessions"), where("professorId", "==", user.uid));
     const unsubscribe = onSnapshot(q, (snap) => {
         let sessions = {};
-        snap.forEach(doc => { sessions[doc.id] = true; });
+        snap.forEach(doc => { 
+            sessions[doc.id] = doc.data(); 
+        });
         setActiveSessions(sessions);
     });
     return () => unsubscribe();
@@ -263,39 +273,6 @@ export default function ProfessorDashboard() {
   const openDigitalID = () => setIsDigitalIdModalOpen(true);
   const closeDigitalID = () => setIsDigitalIdModalOpen(false);
 
-  const resetDailyAttendance = async (courseId) => {
-      try {
-          const user = auth.currentUser;
-          const q = query(collection(db, "professorCourses"), where("professorId", "==", user.uid), where("courseId", "==", courseId));
-          const querySnapshot = await getDocs(q);
-          querySnapshot.forEach(async (document) => {
-              await updateDoc(doc(db, "professorCourses", document.id), { todayPresent: 0, todayLate: 0, todayAbsent: 0 });
-          });
-          showNotification(`Attendance reset for ${courseId}`);
-      } catch (e) {
-          showNotification('Failed to reset attendance', 'error');
-      }
-  };
-
-  const resetAllAttendance = () => {
-      Alert.alert('Reset Attendance', 'Reset today\'s attendance for ALL courses?', [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-              text: 'Reset', style: 'destructive', 
-              onPress: () => {
-                  courses.forEach(c => resetDailyAttendance(c.id));
-                  showNotification('All courses reset for the day');
-              } 
-          }
-      ]);
-  };
-
-  const openAddModal = () => {
-      setModalType('add');
-      setNewCourse({ id: '', name: '', schedule: '', room: '', students: '', capacity: '' });
-      setShowModal(true);
-  };
-
   const openAttendanceModal = (course) => {
       setModalType('attendance');
       setSelectedCourse(course);
@@ -349,6 +326,108 @@ export default function ProfessorDashboard() {
               } 
           }
       ]);
+  };
+
+  const viewLiveAttendees = (courseId, courseName) => {
+      setSelectedCourseForAttendees({ id: courseId, name: courseName });
+      setIsAttendeesModalOpen(true);
+      
+      const q = query(collection(db, "attendance"), where("courseId", "==", courseId));
+      const unsub = onSnapshot(q, snap => {
+          const attendees = [];
+          const today = new Date().toDateString();
+          snap.forEach(doc => {
+              const data = doc.data();
+              const recordDate = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+              if (recordDate.toDateString() === today) {
+                  attendees.push(data);
+              }
+          });
+          setLiveAttendees(attendees);
+      });
+      setAttendeesListener(() => unsub);
+  };
+
+  const closeAttendeesModal = () => {
+      setIsAttendeesModalOpen(false);
+      if (attendeesListener) {
+          attendeesListener(); 
+          setAttendeesListener(null);
+      }
+  };
+
+  const exportAttendanceSheet = async () => {
+      if(liveAttendees.length === 0) {
+          showNotification("No students checked in yet", "warning");
+          return;
+      }
+      
+      // 1. تجهيز الداتا بتاعت الإكسيل (CSV)
+      let csvHeader = "Student Name,Student Code,Status,Distance (meters),Time\n";
+      let csvRows = liveAttendees.map(a => {
+          const time = a.timestamp?.toDate ? a.timestamp.toDate().toLocaleTimeString() : 'N/A';
+          return `${a.studentName},${a.studentCode},${a.status},${a.distanceFromClass},${time}`;
+      }).join("\n");
+      
+      const csvContent = csvHeader + csvRows;
+
+      // 2. تأمين اسم الملف عشان لو فيه رموز ميبوظش الحفظ
+      const safeCourseId = (selectedCourseForAttendees?.id || 'Course').replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `Attendance_${safeCourseId}.csv`;
+      const fileUri = FileSystem.documentDirectory + fileName;
+
+      try {
+          // 3. حفظ الملف (من غير ما نحدد الـ encoding عشان ياخد الـ default بأمان)
+          await FileSystem.writeAsStringAsync(fileUri, csvContent);
+
+          // 4. فتح قائمة المشاركة بمواصفات الإكسيل
+          if (await Sharing.isAvailableAsync()) {
+              await Sharing.shareAsync(fileUri, {
+                  mimeType: 'text/csv', // عشان الموبايل يفهم إنه شيت
+                  dialogTitle: 'Export Attendance Sheet',
+                  UTI: 'public.comma-separated-values-text' // لضمان دعم الآيفون (iOS)
+              });
+          } else {
+              Alert.alert("Error", "Sharing is not available on this device");
+          }
+      } catch (error) {
+          console.error("Export Error:", error);
+          // خليت الـ Alert يعرض الإيرور بالظبط عشان لو حصلت حاجة نبقى عارفينها
+          Alert.alert("Export Failed", error.message);
+      }
+  };
+
+  const resetDailyAttendance = async (courseId) => {
+      try {
+          const user = auth.currentUser;
+          const q = query(collection(db, "professorCourses"), where("professorId", "==", user.uid), where("courseId", "==", courseId));
+          const querySnapshot = await getDocs(q);
+          querySnapshot.forEach(async (document) => {
+              await updateDoc(doc(db, "professorCourses", document.id), { todayPresent: 0, todayLate: 0, todayAbsent: 0 });
+          });
+          showNotification(`Attendance reset for ${courseId}`);
+      } catch (e) {
+          showNotification('Failed to reset attendance', 'error');
+      }
+  };
+
+  const resetAllAttendance = () => {
+      Alert.alert('Reset Attendance', 'Reset today\'s attendance for ALL courses?', [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+              text: 'Reset', style: 'destructive', 
+              onPress: () => {
+                  courses.forEach(c => resetDailyAttendance(c.id));
+                  showNotification('All courses reset for the day');
+              } 
+          }
+      ]);
+  };
+
+  const openAddModal = () => {
+      setModalType('add');
+      setNewCourse({ id: '', name: '', schedule: '', room: '', students: '', capacity: '' });
+      setShowModal(true);
   };
 
   const handleSelectCourseFromAdmin = (course) => {
@@ -474,8 +553,6 @@ export default function ProfessorDashboard() {
     } catch (error) {}
   };
 
-  const exportData = () => { showNotification('Data exported to console'); };
-
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
         { text: "Cancel", style: "cancel" },
@@ -504,7 +581,7 @@ export default function ProfessorDashboard() {
           <Feather name="message-square" size={20} color="#fff" />
           <Text style={styles.actionBtnText}>Messages</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#f59e0b'}]} onPress={exportData}>
+        <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#f59e0b'}]} onPress={() => showNotification("Go to My Courses to export sheets", "info")}>
           <Feather name="download" size={20} color="#fff" />
           <Text style={styles.actionBtnText}>Export Data</Text>
         </TouchableOpacity>
@@ -512,6 +589,51 @@ export default function ProfessorDashboard() {
           <Feather name="clock" size={20} color="#fff" />
           <Text style={styles.actionBtnText}>Reset Today</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* 🔴 شاشة التحكم في الغياب المباشر */}
+      <View style={[styles.card, { borderColor: '#ef4444' }]}>
+        <View style={styles.cardHeader}>
+          <Feather name="radio" size={20} color="#ef4444" />
+          <Text style={styles.cardTitle}>Live Attendance Control</Text>
+        </View>
+        
+        {courses.length === 0 ? (
+            <Text style={styles.emptyText}>Add courses to start attendance</Text>
+        ) : (
+            courses.map(c => {
+                const sessionData = activeSessions[c.id];
+                return (
+                    <View key={c.id} style={styles.liveCourseRow}>
+                        <View style={{flex: 1}}>
+                            <Text style={styles.boldCell}>{c.name}</Text>
+                            <Text style={styles.mutedText}>{c.id}</Text>
+                        </View>
+                        
+                        {sessionData ? (
+                            <View style={{alignItems: 'flex-end'}}>
+                                <View style={styles.activePill}>
+                                    <View style={styles.redDot}/> 
+                                    <Text style={{color:'#ef4444', fontWeight:'bold', fontSize:12}}>LIVE (Code: {sessionData.attendanceCode})</Text>
+                                </View>
+                                <View style={{flexDirection: 'row', gap: 5, marginTop: 8}}>
+                                    <TouchableOpacity style={[styles.actionBtnSmall, {backgroundColor: '#4361ee'}]} onPress={() => viewLiveAttendees(c.id, c.name)}>
+                                        <Text style={{color: '#fff', fontSize: 12}}>View Attendees</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.actionBtnSmall, {backgroundColor: '#ef4444'}]} onPress={() => endLiveAttendanceSession(c.id)}>
+                                        <Text style={{color: '#fff', fontSize: 12}}>End</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ) : (
+                            <TouchableOpacity style={[styles.actionBtnSmall, {backgroundColor: '#10b981'}]} onPress={() => openAttendanceModal(c)}>
+                                <Text style={{color: '#fff', fontSize: 12}}>Start Session</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                )
+            })
+        )}
       </View>
 
       <View style={styles.statsGrid}>
@@ -531,42 +653,6 @@ export default function ProfessorDashboard() {
               <Text style={styles.statLabel}>Present Today</Text>
               <Text style={[styles.statValue, {color: '#f59e0b'}]}>{totalPresent}</Text>
           </View>
-      </View>
-
-      <View style={styles.tableCard}>
-        <View style={styles.tableHeader}>
-          <Text style={styles.tableTitle}>Recent Courses Added</Text>
-          <TouchableOpacity onPress={() => setActiveTab('My Courses')}>
-            <Text style={styles.viewAllLink}>View All</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ minWidth: 400 }}>
-            {filteredCourses.slice(0, 4).length === 0 ? (
-              <Text style={styles.emptyText}>No data</Text>
-            ) : (
-              filteredCourses.slice(0, 4).map(c => (
-                <View key={c.id} style={styles.tableRow}>
-                  <View style={styles.courseInfo}>
-                    <Text style={styles.courseCodeText}>{c.id}</Text>
-                    <Text style={styles.courseNameText} numberOfLines={1}>{c.name}</Text>
-                  </View>
-                  <View style={styles.rowActions}>
-                    <TouchableOpacity onPress={() => handleView(c)} style={styles.actionIcon}>
-                      <Feather name="eye" size={16} color="#2196f3" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleEdit(c)} style={styles.actionIcon}>
-                      <Feather name="edit-2" size={16} color="#4caf50" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => deleteCourse(c.id)} style={styles.actionIcon}>
-                      <Feather name="trash-2" size={16} color="#ef4444" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
-            )}
-          </View>
-        </ScrollView>
       </View>
     </View>
   );
@@ -593,8 +679,6 @@ export default function ProfessorDashboard() {
             <Text style={[styles.headerCell, { width: 80 }]}>Room</Text>
             <Text style={[styles.headerCell, { width: 80 }]}>Students</Text>
             <Text style={[styles.headerCell, { width: 110 }]}>Attendance %</Text>
-            <Text style={[styles.headerCell, { width: 140 }]}>Today's Attend.</Text>
-            <Text style={[styles.headerCell, { width: 120 }]}>Live Session</Text>
             <Text style={[styles.headerCell, { width: 140 }]}>Actions</Text>
           </View>
 
@@ -618,30 +702,9 @@ export default function ProfessorDashboard() {
                             </View>
                         </View>
 
-                        <View style={[styles.cell, { width: 140 }]}>
-                            <View style={styles.todayAttendanceRow}>
-                                <Text style={styles.presentBadge}>P: {c.todayPresent || 0}</Text>
-                                <Text style={styles.lateBadge}>L: {c.todayLate || 0}</Text>
-                                <Text style={styles.absentBadge}>A: {c.todayAbsent || 0}</Text>
-                            </View>
-                        </View>
-
-                        <View style={[styles.cell, { width: 120 }]}>
-                            {activeSessions[c.id] ? (
-                                <TouchableOpacity style={[styles.startAttendanceBtn, { backgroundColor: '#ef4444' }]} onPress={() => endLiveAttendanceSession(c.id)}>
-                                    <Text style={styles.startAttendanceText}>End Session</Text>
-                                </TouchableOpacity>
-                            ) : (
-                                <TouchableOpacity style={styles.startAttendanceBtn} onPress={() => openAttendanceModal(c)}>
-                                    <Text style={styles.startAttendanceText}>Start Session</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
                         <View style={[styles.cell, { width: 140, flexDirection: 'row', gap: 10 }]}>
-                            <TouchableOpacity onPress={() => resetDailyAttendance(c.id)} style={styles.actionIcon}><Feather name="clock" size={18} color="#f59e0b" /></TouchableOpacity>
+                            <TouchableOpacity onPress={() => handleView(c)} style={styles.actionIcon}><Feather name="eye" size={18} color="#2196f3" /></TouchableOpacity>
                             <TouchableOpacity onPress={() => handleEdit(c)} style={styles.actionIcon}><Feather name="edit-2" size={18} color="#4caf50" /></TouchableOpacity>
-                            <TouchableOpacity onPress={() => { setSelectedStudentForMessage({ id: 'all', studentName: 'All Students' }); setIsMessageToStudentModalOpen(true); }} style={styles.actionIcon}><Feather name="mail" size={18} color="#4361ee" /></TouchableOpacity>
                             <TouchableOpacity onPress={() => deleteCourse(c.id)} style={styles.actionIcon}><Feather name="trash-2" size={18} color="#ef4444" /></TouchableOpacity>
                         </View>
                     </View>
@@ -724,13 +787,6 @@ export default function ProfessorDashboard() {
       </View>
   );
 
-  const renderUnderDevelopment = () => (
-    <View style={styles.developmentContainer}>
-      <Feather name="settings" size={60} color="#94a3b8" />
-      <Text style={styles.developmentText}>This feature is active in the Web Version.</Text>
-    </View>
-  );
-
   return (
     <SafeAreaView style={styles.container}>
       {toast.show && (
@@ -779,22 +835,12 @@ export default function ProfessorDashboard() {
         />
       </View>
 
-      {/* الشريط تم فيه ترتيب التابات وإضافة الـ Logout والـ Students والـ LMS اللي رجعوا */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topNav} contentContainerStyle={styles.topNavContent}>
         <TouchableOpacity style={[styles.navItem, activeTab === 'Dashboard' && styles.navItemActive]} onPress={() => setActiveTab('Dashboard')}>
           <Text style={[styles.navText, activeTab === 'Dashboard' && styles.navTextActive]}>Dashboard</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.navItem, activeTab === 'My Courses' && styles.navItemActive]} onPress={() => setActiveTab('My Courses')}>
           <Text style={[styles.navText, activeTab === 'My Courses' && styles.navTextActive]}>My Courses</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.navItem, activeTab === 'Students' && styles.navItemActive]} onPress={() => setActiveTab('Students')}>
-          <Text style={[styles.navText, activeTab === 'Students' && styles.navTextActive]}>Students</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.navItem, activeTab === 'LMS' && styles.navItemActive]} onPress={() => setActiveTab('LMS')}>
-          <Text style={[styles.navText, activeTab === 'LMS' && styles.navTextActive]}>LMS</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.navItem, activeTab === 'Analytics' && styles.navItemActive]} onPress={() => setActiveTab('Analytics')}>
-          <Text style={[styles.navText, activeTab === 'Analytics' && styles.navTextActive]}>Analytics</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.navItem, activeTab === 'Messages' && styles.navItemActive]} onPress={() => setActiveTab('Messages')}>
           <Text style={[styles.navText, activeTab === 'Messages' && styles.navTextActive]}>Messages</Text>
@@ -810,17 +856,65 @@ export default function ProfessorDashboard() {
         {activeTab === 'Dashboard' && renderDashboard()}
         {activeTab === 'My Courses' && renderMyCourses()}
         {activeTab === 'Messages' && renderMessages()}
-        {(activeTab === 'Students' || activeTab === 'LMS' || activeTab === 'Analytics') && renderUnderDevelopment()}
         
         <View style={{height: 30}} />
       </ScrollView>
 
-      {/* الـ zIndex متظبط عشان الزرار ميخفيش حاجة */}
       <TouchableOpacity style={styles.passwordFloatingButton} onPress={openDigitalID}>
         <Feather name="shield" size={20} color="#fff" />
       </TouchableOpacity>
 
-      {/* Modals */}
+      {/* 🔴 Modal: Live Attendees */}
+      <Modal visible={isAttendeesModalOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+              <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+                  <View style={styles.modalHeader}>
+                      <View>
+                          <Text style={styles.modalTitle}>Live Attendees</Text>
+                          <Text style={styles.modalSubtitle}>{selectedCourseForAttendees?.name}</Text>
+                      </View>
+                      <TouchableOpacity onPress={closeAttendeesModal}>
+                          <Feather name="x" size={24} color="#64748b" />
+                      </TouchableOpacity>
+                  </View>
+
+                  <ScrollView>
+                      {liveAttendees.length === 0 ? (
+                          <View style={{padding: 40, alignItems: 'center'}}>
+                              <Feather name="users" size={40} color="#cbd5e1" style={{marginBottom: 10}}/>
+                              <Text style={{color: '#94a3b8', textAlign: 'center'}}>No students have checked in today yet.</Text>
+                          </View>
+                      ) : (
+                          liveAttendees.map((student, idx) => (
+                              <View key={idx} style={styles.attendeeRow}>
+                                  <View style={styles.messageAvatar}>
+                                      <Text style={{color: '#fff', fontWeight: 'bold'}}>{student.studentName?.charAt(0) || 'S'}</Text>
+                                  </View>
+                                  <View style={{flex: 1, marginLeft: 10}}>
+                                      <Text style={{fontWeight: 'bold', color: '#1e293b'}}>{student.studentName}</Text>
+                                      <Text style={{fontSize: 12, color: '#64748b'}}>{student.timestamp?.toDate ? student.timestamp.toDate().toLocaleTimeString() : 'Just now'}</Text>
+                                  </View>
+                                  <View style={{alignItems: 'flex-end'}}>
+                                      <Text style={{fontSize: 12, fontWeight: 'bold', color: student.distanceFromClass <= 50 ? '#10b981' : '#ef4444'}}>
+                                          {student.distanceFromClass}m away
+                                      </Text>
+                                  </View>
+                              </View>
+                          ))
+                      )}
+                  </ScrollView>
+
+                  <View style={styles.modalActions}>
+                      <TouchableOpacity style={[styles.submitBtn, {backgroundColor: '#10b981', flexDirection: 'row', justifyContent: 'center', gap: 8}]} onPress={exportAttendanceSheet}>
+                          <Feather name="download" size={18} color="#fff" />
+                          <Text style={styles.submitText}>Export Sheet</Text>
+                      </TouchableOpacity>
+                  </View>
+              </View>
+          </View>
+      </Modal>
+
+      {/* Modal: Start Live Session */}
       <Modal visible={showModal} transparent animationType="slide">
           <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
@@ -867,6 +961,7 @@ export default function ProfessorDashboard() {
           </View>
       </Modal>
 
+      {/* Modal: Select Course */}
       <Modal visible={showCoursePicker} transparent animationType="slide">
           <View style={styles.modalOverlay}>
               <View style={[styles.modalContent, { maxHeight: '80%' }]}>
@@ -1342,14 +1437,20 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
   attendanceCodeBox: { backgroundColor: '#eef2ff', padding: 20, borderRadius: 15, marginVertical: 15 },
   attendanceCodeText: { fontSize: 32, fontWeight: 'bold', color: '#4361ee', textAlign: 'center', letterSpacing: 5 },
-  startAttendanceBtn: { backgroundColor: '#10b981', paddingVertical: 8, paddingHorizontal: 15, borderRadius: 8, alignSelf: 'flex-start', marginTop: 10 },
-  startAttendanceText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   
-  // 🔴 Styles الجديدة للـ Attendance في الـ Courses
+  // 🔴 ---------------- Styles الخاصة بشاشة الحضور اللايف ---------------- 🔴
+  liveCourseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#e2e8f0' },
+  activePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fee2e2', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, alignSelf: 'flex-end' },
+  redDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', marginRight: 6 },
+  actionBtnSmall: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginLeft: 5 },
+  attendeeRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  
   todayAttendanceRow: { flexDirection: 'row', gap: 4, flexWrap: 'wrap' },
   presentBadge: { backgroundColor: '#d1fae5', color: '#059669', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, fontSize: 10, fontWeight: 'bold' },
   lateBadge: { backgroundColor: '#fef3c7', color: '#d97706', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, fontSize: 10, fontWeight: 'bold' },
   absentBadge: { backgroundColor: '#fee2e2', color: '#dc2626', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, fontSize: 10, fontWeight: 'bold' },
   miniAttendanceBar: { width: '100%', height: 4, backgroundColor: '#e2e8f0', borderRadius: 2, marginTop: 4 },
   miniAttendanceFill: { height: '100%', borderRadius: 2 },
+  startAttendanceBtn: { backgroundColor: '#10b981', paddingVertical: 8, paddingHorizontal: 15, borderRadius: 8, alignSelf: 'flex-start', marginTop: 10 },
+  startAttendanceText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
 });
