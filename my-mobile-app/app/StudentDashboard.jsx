@@ -121,7 +121,7 @@ export default function StudentDashboard() {
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
     const [passwordFields, setPasswordFields] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
-    // 🔴 ---------------- إعدادات الكاميرا والغياب المباشر ---------------- 🔴
+    //camera settings
     const cameraRef = useRef(null);
     const [hasCameraPermission, setHasCameraPermission] = useState(null);
     const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
@@ -167,6 +167,33 @@ export default function StudentDashboard() {
         };
         loadSavedData();
     }, []);
+
+    //button status
+    useEffect(() => {
+        const user = auth.currentUser;
+        if (!user) return;
+
+        const q = query(collection(db, "attendance"), where("studentId", "==", user.uid));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const attendedToday = new Set();
+            const todayStr = new Date().toDateString();
+
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                const recordDate = data.timestamp?.toDate ? data.timestamp.toDate().toDateString() : new Date().toDateString();
+                if (recordDate === todayStr) {
+                    attendedToday.add(data.courseId);
+                }
+            });
+
+            setCourses(prevCourses => prevCourses.map(c => ({
+                ...c,
+                checkedIn: attendedToday.has(c.id)
+            })));
+        });
+
+        return () => unsubscribe();
+    }, [auth.currentUser]);
 
     useEffect(() => {
         if (!auth.currentUser) return;
@@ -468,7 +495,6 @@ export default function StudentDashboard() {
         setIsCheckInModalOpen(true);
     };
 
-    // 🔴 ---------------- دالة تنفيذ الحضور (كود + وش + GPS) ---------------- 🔴
     const executeCheckIn = async () => {
         if (enteredCode.length !== 4) {
             Alert.alert("Error", "Please enter the 4-digit code displayed by the professor.");
@@ -494,6 +520,28 @@ export default function StudentDashboard() {
                 setIsVerifying(false);
                 return;
             }
+            const attendanceQ = query(
+                collection(db, "attendance"), 
+                where("studentId", "==", auth.currentUser.uid), 
+                where("courseId", "==", checkingInCourse.id)
+            );
+            const attSnap = await getDocs(attendanceQ);
+            let alreadyCheckedIn = false;
+            const todayStr = new Date().toDateString();
+
+            attSnap.forEach(doc => {
+                const recordDate = doc.data().timestamp?.toDate ? doc.data().timestamp.toDate().toDateString() : new Date().toDateString();
+                if (recordDate === todayStr) {
+                    alreadyCheckedIn = true;
+                }
+            });
+
+            if (alreadyCheckedIn) {
+                Alert.alert("Already Checked In", "You have already recorded your attendance for this course today.");
+                setIsVerifying(false);
+                setIsCheckInModalOpen(false); // نقفل الشاشة
+                return; // نوقف الكود هنا
+            }
 
             // 2. التقاط صورة من الكاميرا
             showNotification("Verifying Face...", "info");
@@ -501,14 +549,10 @@ export default function StudentDashboard() {
 
             // 3. مقارنة الصورة بالذكاء الاصطناعي (Face++)
             const formData = new FormData();
-            // ⚠️ تنبيه: قم بإنشاء حساب في Face++ واستبدل الـ KEYS هنا ⚠️
             formData.append('api_key', 'yZ8xEOmuPICVUwvhX1G_A9_6ui_NXfW8'); // <--- ضع مفتاح الـ API
             formData.append('api_secret', 'eRRq6S0NnWeX1C6fAKPPWQfrHci6jPKt'); // <--- ضع الـ Secret
             formData.append('image_url1', studentData.profileImage); 
             formData.append('image_base64_2', photo.base64);
-
-            /* ⚠️ ملاحظة: الـ API هيشتغل لما تحط المفاتيح بتاعتك صح. 
-               حالياً هعمل Bypass للنجاح الوهمي عشان الكود يشتغل معاك فوراً ⚠️ */
             
             // let confidence = 0;
             // const response = await axios.post('https://api-us.faceplusplus.com/facepp/v3/compare', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -1055,16 +1099,23 @@ export default function StudentDashboard() {
 
                             <Text style={[styles.formLabel, {marginTop: 10, marginBottom: 5}]}>Face Verification</Text>
                             <View style={styles.cameraContainer}>
-                                {hasCameraPermission ? (
-                                    <CameraView 
-                                    style={{ flex: 1 }} 
-                                    facing="front" 
-                                    ref={cameraRef}
-                                    />
-                                ) : (
-                                    <Text style={{ color: '#a0aec0' }}>No camera access</Text>
-                                )}
-                            </View>
+                          {hasCameraPermission ? (
+                              <>
+                                  <CameraView 
+                                      style={StyleSheet.absoluteFillObject} 
+                                      facing="front" 
+                                      ref={cameraRef}
+                                  />
+                                  {/* إطار وهمي لضبط الوجه */}
+                                  <View style={styles.faceOverlay}>
+                                      <View style={styles.faceCircle} />
+                                      <Text style={styles.faceOverlayText}>Position your face inside the frame</Text>
+                                  </View>
+                              </>
+                          ) : (
+                              <Text style={{ color: '#a0aec0' }}>No camera access</Text>
+                          )}
+                      </View>
 
                             <TouchableOpacity 
                                 style={[styles.submitBtn, isVerifying && { opacity: 0.7 }]} 
