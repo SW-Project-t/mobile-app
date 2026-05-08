@@ -17,7 +17,7 @@ import QRCode from 'react-native-qrcode-svg';
 export default function AdminDashboard() {
   const router = useRouter(); 
   
-  // Basic States
+  
   const [users, setUsers] = useState([]);
   const [courses, setCourses] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -25,12 +25,12 @@ export default function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Admin Profile
+  
   const [adminData, setAdminData] = useState({ name: 'System Admin', code: 'ADM-001' });
   const [adminProfileImage, setAdminProfileImage] = useState(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // Modals
+  
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
   const [isAddCourseModalOpen, setIsAddCourseModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -39,7 +39,7 @@ export default function AdminDashboard() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isDigitalIdModalOpen, setIsDigitalIdModalOpen] = useState(false);
 
-  // Messages States
+  
   const [messages, setMessages] = useState([]);
   const [professorMessages, setProfessorMessages] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -56,7 +56,7 @@ export default function AdminDashboard() {
   const [showProfPicker, setShowProfPicker] = useState(false);
   const [selectedMessageDetail, setSelectedMessageDetail] = useState(null);
 
-  // Forms Data
+  
   const [newUserData, setNewUserData] = useState({
     fullName: '', email: '', password: '', role: '',
     academicYear: '', code: '', department: '', phoneNumber: '',
@@ -439,7 +439,7 @@ export default function AdminDashboard() {
       return <View style={styles.center}><ActivityIndicator size="large" color="#4361ee" /></View>
   }
 
-  // ---------------- RENDER FUNCTIONS ----------------
+  
   const renderDashboard = () => (
     <View>
       <View style={styles.quickActionsGrid}>
@@ -1442,12 +1442,12 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: 10 },
   searchInput: { flex: 1, paddingVertical: 12, fontSize: 15, color: '#1e293b' },
   
-  // شريط التمرير العلوي
+
   topNav: { backgroundColor: '#fff', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#e2e8f0', maxHeight: 60 },
   topNavContent: { paddingRight: 20 },
   navItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f1f5f9', marginHorizontal: 5, gap: 6 },
   navItemActive: { backgroundColor: '#4361ee' },
-  navItemLogout: { backgroundColor: '#fee2e2', marginLeft: 15 }, // زرار تسجيل الخروج
+  navItemLogout: { backgroundColor: '#fee2e2', marginLeft: 15 }, 
   navText: { color: '#64748b', fontWeight: '600', fontSize: 13 },
   navTextActive: { color: '#fff', fontWeight: '600', fontSize: 13 },
   navTextLogout: { color: '#ef4444', fontWeight: '600', fontSize: 13 },
@@ -1477,7 +1477,7 @@ const styles = StyleSheet.create({
   tableCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 15, marginBottom: 15 },
   fullPageTable: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 15 },
   
-  // تظبيط مسافات الهيدر بتاع الجداول
+  
   tableHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, flexWrap: 'wrap', gap: 10 },
   headerTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerTitleText: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
@@ -1486,7 +1486,7 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: '#4361ee', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, paddingVertical: 10, borderRadius: 8, gap: 6 },
   primaryButtonText: { color: '#fff', fontWeight: '600' },
   
-  // تظبيط الجداول (إلغاء الـ Flex واستخدام Width ثابت)
+  
   tableHeaderRow: { flexDirection: 'row', backgroundColor: '#f8fafc', paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 2, borderBottomColor: '#e2e8f0' },
   headerCell: { fontWeight: 'bold', color: '#475569', fontSize: 13 },
   tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
@@ -1520,7 +1520,7 @@ const styles = StyleSheet.create({
   developmentContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   developmentText: { color: '#94a3b8', fontSize: 16, marginTop: 15 },
   
-  // تظبيط الـ zIndex للدرع الأزرق
+  
   passwordFloatingButton: { position: 'absolute', bottom: 20, right: 20, backgroundColor: '#4361ee', padding: 15, borderRadius: 30, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, zIndex: 100 },
   
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 15 },

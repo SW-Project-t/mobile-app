@@ -87,7 +87,7 @@ export default function StudentDashboard() {
     const [selectedCourse, setSelectedCourse] = useState(null);
     const [profileImage, setProfileImage] = useState(null);
     
-    // Modals States
+    
     const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
     const [isViewCourseModalOpen, setIsViewCourseModalOpen] = useState(false);
     const [isRiskDetailsModalOpen, setIsRiskDetailsModalOpen] = useState(false);
@@ -95,7 +95,7 @@ export default function StudentDashboard() {
     const [isDigitalIdModalOpen, setIsDigitalIdModalOpen] = useState(false);
     const [selectedRiskCourse, setSelectedRiskCourse] = useState(null);
 
-    // Messages States
+    
     const [studentMessages, setStudentMessages] = useState([]);
     const [unreadMessageCount, setUnreadMessageCount] = useState(0);
     const [isMessagesModalOpen, setIsMessagesModalOpen] = useState(false);
@@ -110,7 +110,7 @@ export default function StudentDashboard() {
     const [professorsList, setProfessorsList] = useState([]);
     const [showProfPicker, setShowProfPicker] = useState(false);
 
-    // LMS States
+    
     const [lmsMaterials, setLmsMaterials] = useState([]);
     const [lmsAssignments, setLmsAssignments] = useState([]);
     const [selectedCourseForLMS, setSelectedCourseForLMS] = useState(null);
@@ -121,7 +121,7 @@ export default function StudentDashboard() {
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
     const [passwordFields, setPasswordFields] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
-    //camera settings
+    
     const cameraRef = useRef(null);
     const [hasCameraPermission, setHasCameraPermission] = useState(null);
     const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
@@ -168,7 +168,7 @@ export default function StudentDashboard() {
         loadSavedData();
     }, []);
 
-    //button status
+    
     useEffect(() => {
         const user = auth.currentUser;
         if (!user) return;
@@ -250,7 +250,7 @@ export default function StudentDashboard() {
                             department: userData.department || "General",
                             academicYear: userData.academicYear || "Year 1",
                             gpa: userData.gpa || 0,
-                            profileImage: userData.profileImage || null // 🔴 نضمن سحب الصورة المرفوعة للـ AI
+                            profileImage: userData.profileImage || null 
                         }));
                         if(userData.profileImage) setProfileImage(userData.profileImage);
                         
@@ -425,7 +425,7 @@ export default function StudentDashboard() {
         ]);
     };
 
-    // 🔴 ---------------- رفع الصورة وتخزينها على Cloudinary ---------------- 🔴
+    
     const handleImageUpload = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (permissionResult.granted === false) return;
@@ -440,7 +440,7 @@ export default function StudentDashboard() {
             showNotification('Uploading image...', 'info');
             
             try {
-                // رفع الصورة على Cloudinary لضمان وصول الـ API لها
+                
                 const formData = new FormData();
                 formData.append('file', { uri, type: 'image/jpeg', name: 'profile.jpg' });
                 formData.append('upload_preset', 'Lms_uploads');
@@ -479,7 +479,7 @@ export default function StudentDashboard() {
         showNotification('Photo removed');
     };
 
-    // 🔴 ---------------- فتح شاشة الحضور ---------------- 🔴
+    
     const openCheckInModal = (courseId, courseName) => {
         if (!hasCameraPermission) {
             Alert.alert("Permission Denied", "Camera permission is required for Face Verification.");
@@ -504,7 +504,7 @@ export default function StudentDashboard() {
         setIsVerifying(true);
 
         try {
-            // 1. التأكد من الكود المكتوب
+            
             const sessionRef = doc(db, "active_sessions", checkingInCourse.id);
             const sessionSnap = await getDoc(sessionRef);
 
@@ -539,32 +539,32 @@ export default function StudentDashboard() {
             if (alreadyCheckedIn) {
                 Alert.alert("Already Checked In", "You have already recorded your attendance for this course today.");
                 setIsVerifying(false);
-                setIsCheckInModalOpen(false); // نقفل الشاشة
-                return; // نوقف الكود هنا
+                setIsCheckInModalOpen(false); 
+                return; 
             }
 
-            // 2. التقاط صورة من الكاميرا
+            
             showNotification("Verifying Face...", "info");
             const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
 
-            // 3. مقارنة الصورة بالذكاء الاصطناعي (Face++)
+            
             const formData = new FormData();
-            formData.append('api_key', 'yZ8xEOmuPICVUwvhX1G_A9_6ui_NXfW8'); // <--- ضع مفتاح الـ API
-            formData.append('api_secret', 'eRRq6S0NnWeX1C6fAKPPWQfrHci6jPKt'); // <--- ضع الـ Secret
+            formData.append('api_key', 'yZ8xEOmuPICVUwvhX1G_A9_6ui_NXfW8'); 
+            formData.append('api_secret', 'eRRq6S0NnWeX1C6fAKPPWQfrHci6jPKt'); 
             formData.append('image_url1', studentData.profileImage); 
             formData.append('image_base64_2', photo.base64);
             
-            // let confidence = 0;
-            // const response = await axios.post('https://api-us.faceplusplus.com/facepp/v3/compare', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-            // confidence = response.data.confidence;
             
-            // if (confidence < 80) {
-            //     Alert.alert("Verification Failed", "Face does not match your profile picture!");
-            //     setIsVerifying(false);
-            //     return;
-            // }
+            
+            
+            
+            
+            
+            
+            
+            
 
-            // 4. التأكد من الـ GPS
+            
             let { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
                 Alert.alert("Permission Denied", "Location permission is required.");
@@ -584,7 +584,7 @@ export default function StudentDashboard() {
                 return;
             }
 
-            // 5. التسجيل النهائي في الفايربيز
+            
             if (auth.currentUser) {
                 await addDoc(collection(db, "attendance"), {
                     studentId: auth.currentUser.uid,
@@ -597,7 +597,7 @@ export default function StudentDashboard() {
                 });
             }
             
-            // 6. تحديث الواجهة
+            
             setCourses(prev => prev.map(c => {
                 if (c.id === checkingInCourse.id && !c.checkedIn) {
                     const newAttendanceRate = Math.min(100, c.attendanceRate + 1);
@@ -643,7 +643,7 @@ export default function StudentDashboard() {
         } catch (error) {}
     };
 
-    // باقي دوال الأبلكيشن... (كما هي)
+    
     const fetchLMSMaterials = async (courseId) => {
         try {
             const q = query(collection(db, "lms_materials"), where("courseId", "==", courseId));

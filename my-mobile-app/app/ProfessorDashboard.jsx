@@ -24,7 +24,7 @@ const STORAGE_KEYS = {
 export default function ProfessorDashboard() {
   const router = useRouter(); 
   
-  // Basic States
+  
   const [users, setUsers] = useState([]);
   const [courses, setCourses] = useState([]);
   const [adminCourses, setAdminCourses] = useState([]);
@@ -33,12 +33,12 @@ export default function ProfessorDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Professor Profile
+  
   const [profData, setProfData] = useState({ name: 'Loading...', code: '...' });
   const [profileImage, setProfileImage] = useState(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // Modals
+  
   const [isAddCourseModalOpen, setIsAddCourseModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
@@ -50,19 +50,19 @@ export default function ProfessorDashboard() {
   const [modalType, setModalType] = useState('');
   const [selectedCourse, setSelectedCourse] = useState(null);
 
-  // Live Attendance State
+  
   const [attendanceCode, setAttendanceCode] = useState('');
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [activeSessions, setActiveSessions] = useState({});
   const [cumulativeAttendanceStats, setCumulativeAttendanceStats] = useState({ courses: [], overall: {} });
   
-  // States for viewing live attendees
+  
   const [isAttendeesModalOpen, setIsAttendeesModalOpen] = useState(false);
   const [liveAttendees, setLiveAttendees] = useState([]);
   const [selectedCourseForAttendees, setSelectedCourseForAttendees] = useState(null);
   const [attendeesListener, setAttendeesListener] = useState(null);
 
-  // Messages States
+  
   const [messages, setMessages] = useState([]);
   const [adminMessages, setAdminMessages] = useState([]);
   const [studentMessages, setStudentMessages] = useState([]);
@@ -78,7 +78,7 @@ export default function ProfessorDashboard() {
   const [showStudentPicker, setShowStudentPicker] = useState(false);
   const [selectedMessageDetail, setSelectedMessageDetail] = useState(null);
 
-  // Forms Data
+  
   const [newCourse, setNewCourse] = useState({ 
     id: '', name: '', schedule: '', room: '', students: '', capacity: '' 
   });
@@ -362,7 +362,7 @@ export default function ProfessorDashboard() {
           return;
       }
       
-      // 1. تجهيز الداتا بتاعت الإكسيل (CSV)
+      
       let csvHeader = "Student Name,Student Code,Status,Distance (meters),Time\n";
       let csvRows = liveAttendees.map(a => {
           const time = a.timestamp?.toDate ? a.timestamp.toDate().toLocaleTimeString() : 'N/A';
@@ -371,28 +371,28 @@ export default function ProfessorDashboard() {
       
       const csvContent = csvHeader + csvRows;
 
-      // 2. تأمين اسم الملف عشان لو فيه رموز ميبوظش الحفظ
+      
       const safeCourseId = (selectedCourseForAttendees?.id || 'Course').replace(/[^a-zA-Z0-9]/g, '_');
       const fileName = `Attendance_${safeCourseId}.csv`;
       const fileUri = FileSystem.documentDirectory + fileName;
 
       try {
-          // 3. حفظ الملف (من غير ما نحدد الـ encoding عشان ياخد الـ default بأمان)
+          
           await FileSystem.writeAsStringAsync(fileUri, csvContent);
 
-          // 4. فتح قائمة المشاركة بمواصفات الإكسيل
+          
           if (await Sharing.isAvailableAsync()) {
               await Sharing.shareAsync(fileUri, {
-                  mimeType: 'text/csv', // عشان الموبايل يفهم إنه شيت
+                  mimeType: 'text/csv', 
                   dialogTitle: 'Export Attendance Sheet',
-                  UTI: 'public.comma-separated-values-text' // لضمان دعم الآيفون (iOS)
+                  UTI: 'public.comma-separated-values-text' 
               });
           } else {
               Alert.alert("Error", "Sharing is not available on this device");
           }
       } catch (error) {
           console.error("Export Error:", error);
-          // خليت الـ Alert يعرض الإيرور بالظبط عشان لو حصلت حاجة نبقى عارفينها
+          
           Alert.alert("Export Failed", error.message);
       }
   };
@@ -569,7 +569,7 @@ export default function ProfessorDashboard() {
 
   if (isLoading) return <View style={styles.center}><ActivityIndicator size="large" color="#4361ee" /></View>;
 
-  // ---------------- RENDER ----------------
+  
   const renderDashboard = () => (
     <View>
       <View style={styles.quickActionsGrid}>
@@ -591,7 +591,7 @@ export default function ProfessorDashboard() {
         </TouchableOpacity>
       </View>
 
-      {/* 🔴 شاشة التحكم في الغياب المباشر */}
+      {}
       <View style={[styles.card, { borderColor: '#ef4444' }]}>
         <View style={styles.cardHeader}>
           <Feather name="radio" size={20} color="#ef4444" />
@@ -1438,7 +1438,7 @@ const styles = StyleSheet.create({
   attendanceCodeBox: { backgroundColor: '#eef2ff', padding: 20, borderRadius: 15, marginVertical: 15 },
   attendanceCodeText: { fontSize: 32, fontWeight: 'bold', color: '#4361ee', textAlign: 'center', letterSpacing: 5 },
   
-  // 🔴 ---------------- Styles الخاصة بشاشة الحضور اللايف ---------------- 🔴
+ 
   liveCourseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#e2e8f0' },
   activePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fee2e2', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, alignSelf: 'flex-end' },
   redDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', marginRight: 6 },

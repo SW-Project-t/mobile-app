@@ -11,16 +11,16 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "./firebase"; // مسار الفايربيز الصح بتاعك بنقطة واحدة اهو
-import { useRouter } from 'expo-router'; // ضفنا الروتر هنا
+import { auth } from "./firebase"; 
+import { useRouter } from 'expo-router'; 
 
 const teamLogo = require('../assets/images/yallaclass_logo.jpg');
 
-// شيلنا الـ navigation من الأقواس خالص
+
 export default function ForgetPassword() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter(); // عرفنا الروتر
+  const router = useRouter(); 
 
   const handleResetPassword = async () => {
     if (email === "") {
@@ -34,7 +34,7 @@ export default function ForgetPassword() {
       await sendPasswordResetEmail(auth, email);
       Alert.alert("نجاح", "Password reset email sent! Please check your inbox.");
       
-      // هنا استخدمنا الروتر عشان يرجع للوجين بدل الـ navigation اللي كانت بتضرب إيرور
+      
       router.back();
       
     } catch (error) {
